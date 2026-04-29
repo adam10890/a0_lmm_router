@@ -1,0 +1,153 @@
+# a0_lmm_router — llama.cpp server configuration (fallback)
+#
+# Discovery order (handled by launcher.py + _10_init_servers.py):
+#   1. /a0/conf/llama_cpp_servers.yaml          (A0 root, host-mounted if you set it up)
+#   2. this file (plugin conf, always mounted via usr/plugins/)
+#
+# Set `global.auto_start: false` to make the plugin inert at boot.
+# Use launcher.py (CLI) or the llama_cpp_control tool to start/stop slots.
+
+# -----------------------------------------------------------------
+# Active slots  (EMPTY = nothing auto-starts)
+# -----------------------------------------------------------------
+# Add entries here to actually boot llama.cpp servers. Example:
+#
+# active_slots:
+#   - id: slot_chat
+#     port: 8080
+#     model_id: granite_8b
+#     role: chat
+#     context_size: 8192
+#     enabled: true
+#     auto_load: true
+#
+# Each id becomes a ServerInstance inside LlamaCppManager.
+active_slots:
+  - id: slot_chat
+    port: 8080
+    model_id: qwen3_5_9b
+    model_path: "/models/utility/qwen3.5_9b/Qwen3.5-9B-Q4_K_M.gguf"
+    role: chat
+    # Qwen3.5-9B @ Q4_K_M ≈ 5.7GB weights + 9GB KV@64K = ~14.7GB (fits on 24GB)
+    context_size: 65536
+    gpu_layers: -1
+    batch_size: 512
+    threads: 8
+    parallel_slots: 1
+    flash_attention: on
+    enabled: true
+
+  - id: slot_utility
+    port: 8088
+    model_id: qwen3_5_9b
+    model_path: "/models/utility/qwen3.5_9b/Qwen3.5-9B-Q4_K_M.gguf"
+    role: utility
+    # qwen3.5-9B @ Q4_K_M ≈ 5.7GB weights + ~2.3GB KV@16K = ~8GB (fits alongside chat 64K on 24GB)
+    context_size: 16384
+    gpu_layers: -1
+    batch_size: 512
+    threads: 4
+    parallel_slots: 1
+    flash_attention: on
+    enabled: true
+
+  - id: slot_embedding
+    port: 8082
+    model_id: nomic_embed
+    model_path: "/models/embedding/nomic/nomic-embed-text-v1.5.Q4_K_M.gguf"
+    role: embedding
+    # Embeddings rarely need >8K; 8K gives headroom without wasting VRAM.
+    context_size: 8192
+    gpu_layers: -1
+    batch_size: 512
+    threads: 4
+    parallel_slots: 8
+    embedding_mode: true
+    enabled: true
+
+# -----------------------------------------------------------------
+# Slot defaults applied to every active_slot that doesn't override them
+# -----------------------------------------------------------------
+slot_defaults:
+  gpu_layers: -1
+  batch_size: 512
+  threads: 4
+  parallel_slots: 1
+  flash_attention: true
+  fit: true
+  fit_target_mib: 1024
+  fit_ctx_min: 4096
+  extra_args: []
+
+# -----------------------------------------------------------------
+# Global settings
+# -----------------------------------------------------------------
+global:
+  # Master switch consulted by launcher.py (NOT by LlamaCppManager).
+  # When false, launcher.py exits cleanly without touching Docker/subprocess.
+  auto_start: true
+
+  # Backend used for slot lifecycle ops.
+  #   remote     — plugin is an HTTP client to pre-running llama-server containers
+  #   docker     — plugin manages containers via the Docker SDK
+  #   subprocess — plugin spawns llama-server locally (needs binary on PATH)
+  #   auto       — pick the first that works
+  backend: "remote"
+
+  # Remote backend: host:port of each llama-server.
+  # Used when backend=remote. Leave {} when not running any slots.
+  lmm_hosts:
+    chat:      "host.docker.internal:8080"
+    utility:   "host.docker.internal:8088"
+    embedding: "host.docker.internal:8082"
+
+  # Docker backend: images pulled if missing.
+  docker_image_gpu: "ghcr.io/ggml-org/llama.cpp:server-cuda"
+  docker_image_cpu: "ghcr.io/ggml-org/llama.cpp:server"
+  docker_network: "a0-lmm-net"
+  gpu_count: "all"
+
+  # Models live on the host; mounted into any managed containers.
+  # Override via env LLAMA_CPP_MODELS_DIR if your layout differs.
+  models_dir: "${LLAMA_CPP_MODELS_DIR:-/a0/models}"
+
+  # Subprocess backend settings (only used when backend=subprocess).
+  llama_cpp_path: "/usr/local/bin"
+  server_binary: "llama-server"
+  use_wsl: false
+
+  # Lifecycle
+  startup_timeout: 180
+  health_check_interval: 30
+  auto_restart: true
+  max_restart_attempts: 3
+
+  # Logging
+  log_level: "info"
+  log_dir: "logs/llama_cpp"
+
+# -----------------------------------------------------------------
+# Hardware inventory (advisory — used by model_recommender)
+# -----------------------------------------------------------------
+hardware:
+  gpus:
+    - id: gpu_0
+      name: "NVIDIA RTX 4090"
+      vram_gb: 24
+      cuda_cores: 16384
+      cuda_device: 0
+      enabled: true
+  cpus:
+    - id: cpu_0
+      name: "Host CPU"
+      cores: 16
+      threads: 32
+      enabled: true
+  ram:
+    total_gb: 63
+    reserved_gb: 8
+    available_gb: 55
+  limits:
+    max_concurrent_gpu_models: 3
+    max_concurrent_cpu_models: 1
+    max_total_models: 4

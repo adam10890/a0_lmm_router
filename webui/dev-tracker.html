@@ -1,0 +1,594 @@
+<!-- a0_lmm_router DEV TRACKER — development status radiator -->
+<div x-data="devTracker()" x-init="init()" style="font-family:'IBM Plex Mono','JetBrains Mono','Fira Code',monospace;background:#04080d;min-height:100%;padding:0;color:#a8b5c4;">
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&family=Outfit:wght@300;500;700;900&display=swap');
+
+:root {
+  --ok: #00e676; --warn: #ffc400; --err: #ff3d00; --info: #40c4ff;
+  --done: #00e676; --wip: #ffc400; --todo: #546e7a; --block: #ff3d00;
+  --bg0: #04080d; --bg1: #0a1018; --bg2: #111a24; --bg3: #1a2636;
+  --border: #1e2d3d; --text: #a8b5c4; --bright: #e0e8f0;
+  --accent: #00e676; --accent2: #40c4ff; --accent3: #ffc400;
+}
+
+.dt * { box-sizing: border-box; margin: 0; padding: 0; }
+.dt { background: var(--bg0); }
+
+/* ─── HEADER ─── */
+.dt-hero {
+  position: relative;
+  padding: 32px 28px 24px;
+  background: linear-gradient(180deg, #0a1820 0%, var(--bg0) 100%);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+}
+.dt-hero::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,230,118,.015) 3px, rgba(0,230,118,.015) 4px);
+  pointer-events: none;
+}
+.dt-hero-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: start;
+  gap: 20px;
+}
+.dt-title-wrap { display: flex; flex-direction: column; gap: 4px; }
+.dt-eyebrow {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--accent);
+  opacity: .7;
+}
+.dt-title {
+  font-family: 'Outfit', sans-serif;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: -.5px;
+  color: var(--bright);
+  line-height: 1.1;
+}
+.dt-subtitle {
+  font-size: 11px;
+  color: #5a7080;
+  margin-top: 4px;
+  max-width: 500px;
+  line-height: 1.4;
+}
+.dt-meta-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.dt-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+}
+.dt-meta-label { color: #3d5566; text-transform: uppercase; letter-spacing: 1px; }
+.dt-meta-val { color: var(--bright); font-weight: 600; }
+.dt-version {
+  font-size: 10px;
+  padding: 2px 10px;
+  border-radius: 3px;
+  background: rgba(0,230,118,.1);
+  color: var(--accent);
+  font-weight: 700;
+  border: 1px solid rgba(0,230,118,.2);
+  letter-spacing: .5px;
+}
+
+/* ─── PROGRESS OVERVIEW BAR ─── */
+.dt-progress-strip {
+  display: flex;
+  height: 32px;
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+}
+.dt-progress-strip .seg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  transition: flex .6s ease;
+  white-space: nowrap;
+  padding: 0 8px;
+}
+.seg-done { background: rgba(0,230,118,.12); color: var(--done); }
+.seg-wip  { background: rgba(255,196,0,.12); color: var(--wip); }
+.seg-todo { background: rgba(84,110,122,.1); color: var(--todo); }
+.seg-block { background: rgba(255,61,0,.1); color: var(--block); }
+
+/* ─── BODY ─── */
+.dt-body { padding: 20px 28px 40px; }
+
+/* ─── SECTION ─── */
+.dt-section { margin-bottom: 28px; }
+.dt-section-hdr {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.dt-section-icon {
+  width: 14px; height: 14px;
+  border-radius: 2px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px;
+}
+.dt-section-title {
+  font-family: 'Outfit', sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--bright);
+}
+.dt-section-count {
+  margin-left: auto;
+  font-size: 10px;
+  color: #3d5566;
+}
+
+/* ─── PHASE CARDS ─── */
+.dt-phases { display: flex; flex-direction: column; gap: 6px; }
+.dt-phase {
+  display: grid;
+  grid-template-columns: 32px 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  transition: all .15s;
+}
+.dt-phase:hover { border-color: #2a3e50; background: var(--bg2); }
+.dt-phase-num {
+  font-family: 'Outfit', sans-serif;
+  font-size: 18px;
+  font-weight: 900;
+  color: #1e2d3d;
+  text-align: center;
+  line-height: 1;
+}
+.dt-phase-num.done { color: var(--done); }
+.dt-phase-num.wip { color: var(--wip); }
+.dt-phase-info { display: flex; flex-direction: column; gap: 2px; }
+.dt-phase-name { font-size: 12px; color: var(--bright); font-weight: 600; }
+.dt-phase-desc { font-size: 10px; color: #4a6070; line-height: 1.3; }
+.dt-phase-files { font-size: 9px; color: #3d5566; font-style: italic; }
+.dt-tag {
+  font-size: 8px;
+  padding: 2px 8px;
+  border-radius: 2px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.dt-tag-done  { background: rgba(0,230,118,.1); color: var(--done); border: 1px solid rgba(0,230,118,.2); }
+.dt-tag-wip   { background: rgba(255,196,0,.1); color: var(--wip); border: 1px solid rgba(255,196,0,.2); }
+.dt-tag-todo  { background: rgba(84,110,122,.1); color: var(--todo); border: 1px solid rgba(84,110,122,.2); }
+.dt-tag-block { background: rgba(255,61,0,.1); color: var(--block); border: 1px solid rgba(255,61,0,.2); }
+.dt-priority {
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 2px;
+  font-weight: 600;
+}
+.dt-p-crit { background: rgba(255,61,0,.1); color: var(--err); }
+.dt-p-high { background: rgba(255,196,0,.1); color: var(--warn); }
+.dt-p-med  { background: rgba(64,196,255,.08); color: var(--info); }
+.dt-p-low  { background: rgba(84,110,122,.1); color: var(--todo); }
+
+/* ─── FILE INVENTORY ─── */
+.dt-files { display: flex; flex-direction: column; gap: 4px; }
+.dt-file-row {
+  display: grid;
+  grid-template-columns: 18px 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 10px;
+  font-size: 11px;
+  border-radius: 3px;
+  background: var(--bg1);
+  border: 1px solid transparent;
+}
+.dt-file-row:hover { border-color: var(--border); }
+.dt-file-icon { font-size: 10px; text-align: center; }
+.dt-file-path { color: #6a8899; }
+.dt-file-path b { color: var(--bright); font-weight: 600; }
+.dt-file-status { font-size: 9px; font-weight: 700; letter-spacing: .5px; }
+
+/* ─── BUG TRACKER ─── */
+.dt-bugs { display: flex; flex-direction: column; gap: 6px; }
+.dt-bug {
+  display: grid;
+  grid-template-columns: 24px 1fr auto auto;
+  gap: 10px;
+  align-items: start;
+  padding: 10px 14px;
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.dt-bug-id { font-size: 10px; color: #3d5566; font-weight: 700; }
+.dt-bug-info { display: flex; flex-direction: column; gap: 3px; }
+.dt-bug-title { font-size: 11px; color: var(--bright); font-weight: 600; }
+.dt-bug-desc { font-size: 10px; color: #4a6070; line-height: 1.4; }
+.dt-bug-fix { font-size: 10px; color: var(--accent); opacity: .8; }
+
+/* ─── API ENDPOINTS ─── */
+.dt-apis { display: flex; flex-direction: column; gap: 4px; }
+.dt-api-row {
+  display: grid;
+  grid-template-columns: 8px 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 12px;
+  background: var(--bg1);
+  border-radius: 3px;
+  font-size: 11px;
+}
+.dt-api-dot { width: 6px; height: 6px; border-radius: 50%; }
+.dt-api-dot.live { background: var(--ok); box-shadow: 0 0 6px rgba(0,230,118,.4); }
+.dt-api-dot.planned { background: var(--todo); }
+.dt-api-path { color: var(--bright); font-weight: 500; }
+.dt-api-handler { color: #3d5566; font-size: 10px; }
+.dt-api-status { font-size: 9px; }
+
+/* ─── SELF-REVIEW CHECKS ─── */
+.dt-checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; }
+.dt-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+}
+.dt-check-icon { font-size: 14px; line-height: 1; }
+.dt-check-text { color: var(--text); }
+.dt-check.pass { border-left: 2px solid var(--ok); }
+.dt-check.fail { border-left: 2px solid var(--err); }
+.dt-check.skip { border-left: 2px solid var(--todo); }
+
+/* ─── NOTES ─── */
+.dt-notes {
+  padding: 14px;
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #5a7080;
+}
+.dt-notes strong { color: var(--bright); }
+
+/* ─── ANIMATIONS ─── */
+@keyframes fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.dt-section { animation: fade-in .4s ease both; }
+.dt-section:nth-child(2) { animation-delay: .05s; }
+.dt-section:nth-child(3) { animation-delay: .1s; }
+.dt-section:nth-child(4) { animation-delay: .15s; }
+.dt-section:nth-child(5) { animation-delay: .2s; }
+.dt-section:nth-child(6) { animation-delay: .25s; }
+.dt-section:nth-child(7) { animation-delay: .3s; }
+
+/* ─── 2-COL LAYOUT ─── */
+.dt-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 800px) { .dt-grid-2 { grid-template-columns: 1fr; } }
+</style>
+
+<div class="dt">
+
+  <!-- ═══ HERO HEADER ═══ -->
+  <div class="dt-hero">
+    <div class="dt-hero-grid">
+      <div class="dt-title-wrap">
+        <div class="dt-eyebrow">Development Tracker</div>
+        <div class="dt-title" x-text="plugin.name + ' — ' + plugin.id"></div>
+        <div class="dt-subtitle" x-text="plugin.description"></div>
+      </div>
+      <div class="dt-meta-block">
+        <span class="dt-version" x-text="'v' + plugin.version"></span>
+        <div class="dt-meta">
+          <span class="dt-meta-label">Updated</span>
+          <span class="dt-meta-val" x-text="plugin.lastUpdated"></span>
+        </div>
+        <div class="dt-meta">
+          <span class="dt-meta-label">Files</span>
+          <span class="dt-meta-val" x-text="files.length"></span>
+        </div>
+        <div class="dt-meta">
+          <span class="dt-meta-label">APIs</span>
+          <span class="dt-meta-val" x-text="apis.length"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ PROGRESS STRIP ═══ -->
+  <div class="dt-progress-strip">
+    <div class="seg seg-done" :style="'flex:' + countStatus('done')">
+      <span x-text="countStatus('done') + ' done'"></span>
+    </div>
+    <div class="seg seg-wip" :style="'flex:' + countStatus('wip')" x-show="countStatus('wip') > 0">
+      <span x-text="countStatus('wip') + ' wip'"></span>
+    </div>
+    <div class="seg seg-todo" :style="'flex:' + countStatus('todo')" x-show="countStatus('todo') > 0">
+      <span x-text="countStatus('todo') + ' todo'"></span>
+    </div>
+    <div class="seg seg-block" :style="'flex:' + countStatus('blocked')" x-show="countStatus('blocked') > 0">
+      <span x-text="countStatus('blocked') + ' blocked'"></span>
+    </div>
+  </div>
+
+  <div class="dt-body">
+
+    <!-- ═══ DEVELOPMENT PHASES ═══ -->
+    <div class="dt-section">
+      <div class="dt-section-hdr">
+        <div class="dt-section-icon" style="color:var(--accent)">&#9632;</div>
+        <div class="dt-section-title">Development Phases</div>
+        <div class="dt-section-count" x-text="phases.filter(p=>p.status==='done').length + '/' + phases.length + ' complete'"></div>
+      </div>
+      <div class="dt-phases">
+        <template x-for="(phase, i) in phases" :key="i">
+          <div class="dt-phase">
+            <div class="dt-phase-num" :class="phase.status" x-text="i + 1"></div>
+            <div class="dt-phase-info">
+              <div class="dt-phase-name" x-text="phase.name"></div>
+              <div class="dt-phase-desc" x-text="phase.desc"></div>
+              <div class="dt-phase-files" x-show="phase.files" x-text="phase.files"></div>
+            </div>
+            <span class="dt-tag" :class="'dt-tag-' + phase.status" x-text="phase.status.toUpperCase()"></span>
+            <span class="dt-priority" :class="'dt-p-' + phase.priority" x-text="phase.priority"></span>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <div class="dt-grid-2">
+
+      <!-- ═══ API ENDPOINTS ═══ -->
+      <div class="dt-section">
+        <div class="dt-section-hdr">
+          <div class="dt-section-icon" style="color:var(--accent2)">&#9670;</div>
+          <div class="dt-section-title">API Endpoints</div>
+          <div class="dt-section-count" x-text="apis.filter(a=>a.live).length + '/' + apis.length + ' live'"></div>
+        </div>
+        <div class="dt-apis">
+          <template x-for="api in apis" :key="api.path">
+            <div class="dt-api-row">
+              <div class="dt-api-dot" :class="api.live ? 'live' : 'planned'"></div>
+              <div class="dt-api-path" x-text="api.path"></div>
+              <div class="dt-api-handler" x-text="api.handler"></div>
+              <span class="dt-tag" :class="api.live ? 'dt-tag-done' : 'dt-tag-todo'" x-text="api.live ? 'LIVE' : 'PLANNED'" style="font-size:8px"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- ═══ SELF-REVIEW STATUS ═══ -->
+      <div class="dt-section">
+        <div class="dt-section-hdr">
+          <div class="dt-section-icon" style="color:var(--accent3)">&#10003;</div>
+          <div class="dt-section-title">Self-Review Checks</div>
+          <div class="dt-section-count" x-text="'Last: ' + selfReview.date"></div>
+        </div>
+        <div class="dt-checks">
+          <template x-for="c in selfReview.checks" :key="c.name">
+            <div class="dt-check" :class="c.pass ? 'pass' : 'fail'">
+              <span class="dt-check-icon" x-text="c.pass ? '✓' : '✗'"></span>
+              <span class="dt-check-text" x-text="c.name"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ═══ BUG TRACKER ═══ -->
+    <div class="dt-section">
+      <div class="dt-section-hdr">
+        <div class="dt-section-icon" style="color:var(--err)">&#9679;</div>
+        <div class="dt-section-title">Bug Tracker</div>
+        <div class="dt-section-count" x-text="bugs.filter(b=>b.status==='open').length + ' open / ' + bugs.filter(b=>b.status==='fixed').length + ' fixed'"></div>
+      </div>
+      <div class="dt-bugs">
+        <template x-for="bug in bugs" :key="bug.id">
+          <div class="dt-bug">
+            <div class="dt-bug-id" x-text="'#' + bug.id"></div>
+            <div class="dt-bug-info">
+              <div class="dt-bug-title" x-text="bug.title"></div>
+              <div class="dt-bug-desc" x-text="bug.desc"></div>
+              <div class="dt-bug-fix" x-show="bug.fix" x-text="'Fix: ' + bug.fix"></div>
+            </div>
+            <span class="dt-tag" :class="bug.status === 'fixed' ? 'dt-tag-done' : bug.status === 'wontfix' ? 'dt-tag-block' : 'dt-tag-wip'" x-text="bug.status.toUpperCase()"></span>
+            <span class="dt-priority" :class="'dt-p-' + bug.priority" x-text="bug.priority"></span>
+          </div>
+        </template>
+        <template x-if="bugs.length === 0">
+          <div style="font-size:11px;color:#3d5566;padding:10px">No bugs tracked yet</div>
+        </template>
+      </div>
+    </div>
+
+    <!-- ═══ FILE INVENTORY ═══ -->
+    <div class="dt-section">
+      <div class="dt-section-hdr">
+        <div class="dt-section-icon" style="color:#78909c">&#9776;</div>
+        <div class="dt-section-title">File Inventory</div>
+        <div class="dt-section-count" x-text="files.length + ' files'"></div>
+      </div>
+      <div class="dt-files">
+        <template x-for="f in files" :key="f.path">
+          <div class="dt-file-row">
+            <div class="dt-file-icon" x-text="f.icon"></div>
+            <div class="dt-file-path"><b x-text="f.name"></b> <span x-text="' — ' + f.path" style="opacity:.5"></span></div>
+            <div class="dt-file-status" :style="'color:var(--' + (f.status === 'new' ? 'accent' : f.status === 'modified' ? 'warn' : 'text') + ')'" x-text="f.status"></div>
+            <span class="dt-tag" :class="'dt-tag-' + f.phase" x-text="f.phase" style="font-size:8px"></span>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- ═══ NOTES ═══ -->
+    <div class="dt-section">
+      <div class="dt-section-hdr">
+        <div class="dt-section-icon" style="color:#5a7080">&#9998;</div>
+        <div class="dt-section-title">Notes</div>
+      </div>
+      <div class="dt-notes" x-html="notes"></div>
+    </div>
+
+  </div>
+</div>
+
+</div>
+
+<script type="module">
+/**
+ * Dev Tracker Data — a0_lmm_router
+ *
+ * UPDATE THIS DATA as development progresses.
+ * This is the single source of truth for the plugin's dev status.
+ */
+function devTracker() {
+  return {
+    plugin: {
+      id: 'a0_lmm_router',
+      name: 'LMM Router',
+      version: '1.1.0',
+      description: 'Unified LMM server management + smart routing. Merged from a0_lmm + a0_smart_router. Backend: llama.cpp slot control, health monitoring, remote/docker/subprocess backends, model recommendation & install. Frontend: real-time dashboard, compute monitoring, model finder, model test panel with reasoning_content support.',
+      lastUpdated: '2026-04-20',
+    },
+
+    phases: [
+      { name: 'Plugin Merge — Directory & File Copy', desc: 'Created a0_lmm_router, copied all files from a0_lmm + a0_smart_router', files: '26 files across api/, helpers/, extensions/, tools/, webui/, conf/', status: 'done', priority: 'crit' },
+      { name: 'Import Path Migration', desc: 'Updated all Python imports from a0_lmm/a0_smart_router to a0_lmm_router namespace', files: '10 Python files updated', status: 'done', priority: 'crit' },
+      { name: 'Plugin Configuration', desc: 'New plugin.yaml, .toggle-1 activation, API endpoint paths in config.html', files: 'plugin.yaml, .toggle-1, config.html', status: 'done', priority: 'crit' },
+      { name: 'Compute Monitor', desc: 'GPU/CPU/RAM stats collection + LMM slot aggregation via nvidia-smi & psutil', files: 'helpers/compute_monitor.py, api/lmm_compute_stats.py', status: 'done', priority: 'high' },
+      { name: 'Model Recommender', desc: 'Curated model catalog, hardware-aware recommendations, HuggingFace install', files: 'helpers/model_recommender.py, api/lmm_model_recommend.py, api/lmm_model_install.py', status: 'done', priority: 'high' },
+      { name: 'Dashboard UI', desc: 'Real-time monitoring dashboard — GPU bars, slot controls, model recommendations', files: 'webui/dashboard.html, webui/js/dashboard-store.js', status: 'done', priority: 'med' },
+      { name: 'Config Dashboard Link', desc: 'DASHBOARD button in config.html header opens monitoring dashboard modal', files: 'webui/config.html', status: 'done', priority: 'med' },
+      { name: 'Old Plugin Cleanup', desc: 'Deleted a0_lmm/ and a0_smart_router/ directories, fixed all dangling refs', files: 'usr/plugins/a0_lmm/ (deleted), usr/plugins/a0_smart_router/ (deleted)', status: 'done', priority: 'med' },
+      { name: 'Self-Review & Workflow', desc: 'Ran 7-point self-review checklist, created .windsurf/workflows/self-review.md', files: '.windsurf/workflows/self-review.md', status: 'done', priority: 'med' },
+      { name: 'LMM Inference Client', desc: 'chat_completion, streaming, idle watchdog, fallback chain, capability discovery, preload', files: 'helpers/llama_cpp_manager.py (1A-1J from plan)', status: 'todo', priority: 'crit' },
+      { name: 'local_inference Tool', desc: 'Agent tool for sending prompts to local models with task-specific system prompts', files: 'tools/local_inference.py, prompts/agent.system.tool.local_inference.md', status: 'todo', priority: 'crit' },
+      { name: 'System Prompt Templates', desc: '8 task-specific templates: code_review, code_writer, summarizer, translator, researcher, hebrew_chat, task_planner, classifier', files: 'conf/local_prompts/*.md (8 files)', status: 'todo', priority: 'high' },
+      { name: 'Task Classifier', desc: 'Keyword + LLM classify via utility slot for domain/complexity routing', files: 'helpers/smart_router/task_classifier.py', status: 'todo', priority: 'high' },
+      { name: 'Task Executor + Router Upgrade', desc: 'Connect classification to slot selection + system prompt + payload build', files: 'helpers/smart_router/task_executor.py, extensions/.../_20_smart_router.py', status: 'todo', priority: 'high' },
+      { name: 'Terminal Delegation Tool', desc: 'Spawn terminal sessions powered by local models with streaming results', files: 'tools/local_terminal.py, prompts/agent.system.tool.local_terminal.md', status: 'todo', priority: 'low' },
+      { name: 'Cooldown Probes', desc: 'Auto-recovery for ERROR slots via periodic health probes', files: 'helpers/llama_cpp_manager.py', status: 'todo', priority: 'low' },
+      // --- 2026-04-20 session ---
+      { name: 'GPU Visibility Fix', desc: 'Dashboard was showing "No GPU detected" because nvidia-smi is not in the A0 container. Added /gpu-stats endpoint to host helper; compute_monitor falls back to HTTP when local nvidia-smi fails. Verified end-to-end: RTX 4090, 23.7/24 GB VRAM visible from inside A0.', files: 'tools/lmm_host_helper.py, helpers/compute_monitor.py, docker-compose.yml', status: 'done', priority: 'crit' },
+      { name: 'simpleeval Workaround', desc: 'A0 `agent0ai/agent-zero:latest` image ships without simpleeval even though it is in requirements.txt. helpers.files imports it at module scope, cascading into silent slots=[]. Plugin now resolves its own config path via Path(__file__) with zero A0-core dependency.', files: 'helpers/llama_cpp_manager.py, helpers/compute_monitor.py, api/llamacpp_status.py', status: 'done', priority: 'crit' },
+      { name: 'Model Test Panel', desc: 'New webui page + API endpoint to send test prompts to any slot and inspect content / reasoning_content / timings side-by-side. Button in dashboard header. Enables quick model comparison without the full A0 agent loop.', files: 'api/lmm_test_prompt.py, webui/model-test.html, webui/dashboard.html', status: 'done', priority: 'high' },
+      { name: 'Stale Reference Cleanup', desc: 'Replaced a0-v098 -> agent-zero-2 and localhost:50001 -> localhost:5080 in README and _SYSTEM_MAP.html to match current container layout.', files: 'README.md, _SYSTEM_MAP.html', status: 'done', priority: 'low' },
+      { name: 'Auto-discovery of LMM slots', desc: 'Zero-config install. Three strategies: Docker socket, host-helper /compose-ls, DNS probing. Plugin should find slots automatically on any A0 container. Documented in ROADMAP P1.', files: 'tools/lmm_host_helper.py (+/compose-ls), helpers/llama_cpp_manager.py (+auto-discover)', status: 'todo', priority: 'high' },
+      { name: 'Per-slot VRAM Attribution', desc: 'Blocked on Windows WDDM (nvidia-smi --query-compute-apps returns [N/A]). Pragmatic fallback: gguf file size * 1.15 as ~estimate. Documented in ROADMAP P2.', files: 'tools/lmm_host_helper.py (+/file-size), helpers/compute_monitor.py', status: 'todo', priority: 'med' },
+    ],
+
+    apis: [
+      { path: '/llamacpp_control', handler: 'LlamacppControl', live: true },
+      { path: '/llamacpp_status', handler: 'LlamacppStatus', live: true },
+      { path: '/llamacpp_list_models', handler: 'LlamacppListModels', live: true },
+      { path: '/lmm_test_prompt', handler: 'LmmTestPrompt', live: true },
+      { path: '/lmm_host_ignite', handler: 'LmmHostIgnite', live: true },
+      { path: '/lmm_compute_stats', handler: 'LmmComputeStats', live: true },
+      { path: '/lmm_model_recommend', handler: 'LmmModelRecommend', live: true },
+      { path: '/lmm_model_install', handler: 'LmmModelInstall', live: true },
+      { path: '/lmm_inference', handler: 'LmmInference (planned)', live: false },
+      { path: '/lmm_task_classify', handler: 'LmmTaskClassify (planned)', live: false },
+    ],
+
+    bugs: [
+      { id: 1, title: 'IDE lint: flask/aiohttp/psutil unresolved', desc: 'Local IDE cannot resolve Docker-runtime packages. Shows as import errors in Pyright/Pyrefly.', fix: 'Expected behavior — packages exist in A0 Docker container, not local dev env.', status: 'wontfix', priority: 'low' },
+      { id: 2, title: 'set_data "not a known attribute of None"', desc: '_20_smart_router.py line 38,41 — IDE thinks self.agent.context can be None', fix: 'IDE type inference limitation. Runtime self.agent is always populated by framework.', status: 'wontfix', priority: 'low' },
+      { id: 3, title: 'multi_edit fails on smart_router/__init__.py', desc: 'Multi-line old_string did not match due to whitespace/line-ending differences', fix: 'Used individual edit calls instead of multi_edit for cross-line replacements.', status: 'fixed', priority: 'med' },
+      { id: 4, title: 'robocopy exit code 1 during file copy', desc: 'robocopy returns 1 when files are skipped via /XF — falsely appears as error', fix: 'Normal behavior for robocopy — exit code 1 means "files copied successfully, some skipped".', status: 'fixed', priority: 'low' },
+    ],
+
+    selfReview: {
+      date: '2026-04-15',
+      checks: [
+        { name: 'Import verification', pass: true },
+        { name: 'API endpoint reachability', pass: true },
+        { name: 'plugin.yaml correctness', pass: true },
+        { name: 'No dangling references', pass: true },
+        { name: 'Config consistency', pass: true },
+        { name: 'Smoke test (happy paths)', pass: true },
+        { name: 'Convention compliance', pass: true },
+      ],
+    },
+
+    files: [
+      // API
+      { name: 'llamacpp_control.py', path: 'api/', icon: '⚡', status: 'modified', phase: 'done' },
+      { name: 'llamacpp_status.py', path: 'api/', icon: '⚡', status: 'modified', phase: 'done' },
+      { name: 'llamacpp_list_models.py', path: 'api/', icon: '⚡', status: 'modified', phase: 'done' },
+      { name: 'lmm_compute_stats.py', path: 'api/', icon: '⚡', status: 'new', phase: 'done' },
+      { name: 'lmm_model_recommend.py', path: 'api/', icon: '⚡', status: 'new', phase: 'done' },
+      { name: 'lmm_model_install.py', path: 'api/', icon: '⚡', status: 'new', phase: 'done' },
+      // Helpers
+      { name: 'llama_cpp_manager.py', path: 'helpers/', icon: '⚙', status: 'modified', phase: 'done' },
+      { name: 'compute_monitor.py', path: 'helpers/', icon: '⚙', status: 'new', phase: 'done' },
+      { name: 'model_recommender.py', path: 'helpers/', icon: '⚙', status: 'new', phase: 'done' },
+      { name: '__init__.py', path: 'helpers/backends/', icon: '⚙', status: 'copied', phase: 'done' },
+      { name: 'base.py', path: 'helpers/backends/', icon: '⚙', status: 'copied', phase: 'done' },
+      { name: 'docker_backend.py', path: 'helpers/backends/', icon: '⚙', status: 'copied', phase: 'done' },
+      { name: 'factory.py', path: 'helpers/backends/', icon: '⚙', status: 'copied', phase: 'done' },
+      { name: 'remote_backend.py', path: 'helpers/backends/', icon: '⚙', status: 'copied', phase: 'done' },
+      { name: 'subprocess_backend.py', path: 'helpers/backends/', icon: '⚙', status: 'copied', phase: 'done' },
+      { name: '__init__.py', path: 'helpers/smart_router/', icon: '⚙', status: 'modified', phase: 'done' },
+      { name: 'session_models.py', path: 'helpers/smart_router/', icon: '⚙', status: 'modified', phase: 'done' },
+      { name: 'workflow_registry.py', path: 'helpers/smart_router/', icon: '⚙', status: 'modified', phase: 'done' },
+      // Extensions
+      { name: '_10_init_servers.py', path: 'extensions/python/agent_init/', icon: '▶', status: 'modified', phase: 'done' },
+      { name: '_20_smart_router.py', path: 'extensions/python/message_loop_start/', icon: '▶', status: 'modified', phase: 'done' },
+      // Tools
+      { name: 'llama_cpp_control.py', path: 'tools/', icon: '🔧', status: 'modified', phase: 'done' },
+      // WebUI
+      { name: 'config.html', path: 'webui/', icon: '◈', status: 'modified', phase: 'done' },
+      { name: 'dashboard.html', path: 'webui/', icon: '◈', status: 'new', phase: 'done' },
+      { name: 'dashboard-store.js', path: 'webui/js/', icon: '◈', status: 'new', phase: 'done' },
+      { name: 'dev-tracker.html', path: 'webui/', icon: '◈', status: 'new', phase: 'done' },
+      // Config
+      { name: 'model_providers.yaml', path: 'conf/', icon: '☰', status: 'modified', phase: 'done' },
+      { name: 'plugin.yaml', path: './', icon: '☰', status: 'new', phase: 'done' },
+    ],
+
+    notes: `
+      <strong>Merge Status:</strong> a0_lmm + a0_smart_router → a0_lmm_router — <strong style="color:var(--ok)">COMPLETE</strong><br>
+      <strong>Next Priority:</strong> Phase 10 (LMM Inference Client) — chat_completion + streaming + idle watchdog + fallback chain<br>
+      <strong>Blockers:</strong> None currently<br>
+      <strong>Lint Warnings:</strong> 580+ local IDE warnings — all from missing Docker-runtime packages (flask, aiohttp, psutil, yaml, etc). Harmless.<br>
+      <strong>Old Plugins:</strong> a0_lmm/ and a0_smart_router/ fully deleted. Zero dangling references confirmed via grep.
+    `,
+
+    // ── computed ──
+    countStatus(s) {
+      return this.phases.filter(p => p.status === s).length;
+    },
+
+    init() { /* static data, no polling needed */ },
+  };
+}
+window.devTracker = devTracker;
+</script>

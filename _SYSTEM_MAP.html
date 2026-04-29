@@ -1,0 +1,1347 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>a0_lmm_router — מפת מערכת</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --bg2: #0f172a;
+    --card: #131a35;
+    --card2: #1a2448;
+    --line: #243156;
+    --text: #e6eeff;
+    --muted: #8ea3cc;
+    --accent: #38bdf8;
+    --accent2: #a78bfa;
+    --good: #22c55e;
+    --warn: #f59e0b;
+    --bad: #ef4444;
+    --chip: #1f2a52;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', 'Noto Sans Hebrew', -apple-system, sans-serif;
+    background: radial-gradient(1200px 700px at 80% -10%, #1b2554 0%, transparent 60%),
+                radial-gradient(900px 500px at 0% 100%, #22124a 0%, transparent 60%),
+                var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    line-height: 1.55;
+  }
+  header {
+    padding: 40px 32px 24px;
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, #0f1733 0%, transparent 100%);
+  }
+  h1 {
+    margin: 0 0 8px;
+    font-size: 32px;
+    letter-spacing: -0.5px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  h2 {
+    margin: 32px 0 16px;
+    font-size: 22px;
+    color: var(--text);
+    border-right: 4px solid var(--accent);
+    padding-right: 10px;
+  }
+  h3 { margin: 20px 0 10px; font-size: 16px; color: var(--accent); }
+  p, li { color: var(--muted); }
+  code {
+    background: #091027;
+    border: 1px solid var(--line);
+    padding: 2px 6px;
+    border-radius: 5px;
+    font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+    font-size: 0.88em;
+    color: #d8e3ff;
+  }
+  pre {
+    background: #091027;
+    border: 1px solid var(--line);
+    padding: 14px 16px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-family: 'Cascadia Code', Consolas, monospace;
+    font-size: 13px;
+    direction: ltr;
+    text-align: left;
+  }
+  main { max-width: 1280px; margin: 0 auto; padding: 24px 32px 80px; }
+  .sub {
+    color: var(--muted);
+    margin: 0;
+    font-size: 15px;
+  }
+  .chips { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    background: var(--chip);
+    color: var(--text);
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    border: 1px solid var(--line);
+  }
+  .chip.good { background: #0d2817; color: #7ee2a0; border-color: #1f5c35; }
+  .chip.warn { background: #2a1f0a; color: #fbc765; border-color: #6a4e11; }
+  .chip.bad  { background: #2a0f14; color: #f6888b; border-color: #7a1e24; }
+
+  /* Grid of component cards */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 16px;
+  }
+  .card {
+    background: linear-gradient(180deg, var(--card) 0%, var(--card2) 100%);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px;
+    transition: transform .15s ease, border-color .15s ease;
+  }
+  .card:hover { transform: translateY(-2px); border-color: var(--accent); }
+  .card .tag {
+    display: inline-block;
+    font-size: 11px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: var(--chip);
+    color: var(--muted);
+    margin-bottom: 8px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .card h4 {
+    margin: 0 0 8px;
+    font-size: 16px;
+    color: var(--text);
+  }
+  .card .path {
+    font-family: 'Cascadia Code', Consolas, monospace;
+    font-size: 12px;
+    color: #91b4ef;
+    word-break: break-all;
+    direction: ltr;
+    text-align: left;
+    margin-bottom: 10px;
+  }
+  .card .desc { font-size: 13.5px; color: var(--muted); }
+  .card ul { padding-right: 20px; margin: 8px 0 0; }
+  .card li { font-size: 13px; }
+
+  /* Flow diagram */
+  .flow {
+    background: #0a1026;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 20px;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+    align-items: stretch;
+  }
+  .flow-step {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px;
+    position: relative;
+    font-size: 13px;
+  }
+  .flow-step::after {
+    content: '◀';
+    position: absolute;
+    top: 50%;
+    right: -14px;
+    transform: translateY(-50%);
+    color: var(--accent);
+    font-size: 14px;
+  }
+  .flow-step:last-child::after { display: none; }
+  .flow-step .num {
+    display: inline-block;
+    background: var(--accent);
+    color: #02132a;
+    font-weight: 700;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    text-align: center;
+    font-size: 12px;
+    line-height: 20px;
+    margin-left: 6px;
+  }
+  .flow-step strong { color: var(--text); }
+  .flow-step code { font-size: 11px; }
+
+  /* Architecture map */
+  .arch {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+    margin-top: 12px;
+  }
+  .layer {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px;
+  }
+  .layer h5 {
+    margin: 0 0 8px;
+    font-size: 13px;
+    color: var(--accent2);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+  }
+  .layer .item {
+    background: #0a1028;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    font-size: 13px;
+  }
+  .layer .item b { color: var(--text); }
+  .layer .item .meta {
+    color: var(--muted);
+    font-size: 11px;
+    font-family: Consolas, monospace;
+    direction: ltr;
+    text-align: left;
+    margin-top: 2px;
+  }
+
+  /* Table */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--card);
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    font-size: 13.5px;
+  }
+  th, td { padding: 10px 14px; text-align: right; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--card2); color: var(--accent); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+  td code { font-size: 12px; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: #0f1835; }
+
+  /* Callouts */
+  .callout {
+    border-right: 4px solid;
+    padding: 14px 16px;
+    border-radius: 8px;
+    margin: 14px 0;
+    background: #0f1733;
+  }
+  .callout.info { border-color: var(--accent); }
+  .callout.vision { border-color: var(--accent2); background: #1a123a; }
+  .callout.gap { border-color: var(--warn); }
+  .callout.danger { border-color: var(--bad); }
+  .callout h4 { margin: 0 0 6px; color: var(--text); }
+  .callout p { margin: 0; color: var(--muted); }
+
+  /* Legend */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    font-size: 12px;
+    color: var(--muted);
+    margin: 0 0 14px;
+  }
+  .legend .dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .dot.host   { background: #f97316; }
+  .dot.cont   { background: #38bdf8; }
+  .dot.plugin { background: #a78bfa; }
+  .dot.ext    { background: #22c55e; }
+
+  footer {
+    margin-top: 40px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 12px;
+    text-align: center;
+  }
+
+  details { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 0; margin: 10px 0; }
+  details[open] { background: var(--card2); }
+  summary {
+    padding: 14px 18px;
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--text);
+    list-style: none;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::before { content: '▸ '; color: var(--accent); margin-left: 6px; }
+  details[open] summary::before { content: '▾ '; }
+  details .body { padding: 0 18px 18px; }
+
+  /* Port grid */
+  .ports {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 8px;
+    margin: 10px 0;
+  }
+  .port {
+    background: #0a1028;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 13px;
+  }
+  .port .num {
+    font-family: Consolas, monospace;
+    color: var(--accent);
+    font-weight: 700;
+    font-size: 14px;
+  }
+  .port .what { color: var(--text); font-weight: 600; }
+  .port .who  { color: var(--muted); font-size: 11.5px; direction: ltr; text-align: left; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>a0_lmm_router — מפת מערכת</h1>
+  <p class="sub">
+    פלאגין שלם של Agent Zero: ניהול שרתי llama.cpp (מקומי/Docker/רימוט) + Smart Router שמנתב הודעות.
+    המסמך הזה ממפה את כל הרכיבים, את הזרימה בין הרכיבים, את הפורטים, ואת נקודות ההדלקה/הכיבוי של כל חלק.
+  </p>
+  <div class="chips">
+    <span class="chip good">Backend: Python (יושב בתוך A0 container)</span>
+    <span class="chip good">Frontend: Alpine.js (WebUI של A0)</span>
+    <span class="chip warn">llama.cpp: Docker containers על ה-host</span>
+    <span class="chip">גרסה: 1.0.0</span>
+  </div>
+  <div class="legend" style="margin-top:14px;">
+    <span><span class="dot host"></span> Host (Windows)</span>
+    <span><span class="dot cont"></span> A0 Container</span>
+    <span><span class="dot plugin"></span> Plugin code</span>
+    <span><span class="dot ext"></span> External services</span>
+  </div>
+</header>
+
+<main>
+
+<!-- =========================================================
+     SECTION 1 — Quick TL;DR
+     ========================================================= -->
+<h2>1. סיכום ב-30 שניות</h2>
+
+<div class="callout info">
+  <h4>מה הפלאגין עושה</h4>
+  <p>
+    מנהל <b>שרתי llama.cpp</b> (כל שרת = "slot" ב-port משלו) — מדליק, מכבה, מנטר.
+    ב-Agent Zero הוא מופיע כ-<b>provider</b> אחד או יותר שאפשר לבחור בהם כ-<code>chat_model</code> / <code>utility_model</code>.
+    בנוסף יש <b>Smart Router</b> שמזהה הודעות משתמש לפי patterns ובוחר workflow/slot מתאימים.
+  </p>
+</div>
+
+<div class="callout vision">
+  <h4>החזון שלך (כפי שאני מבין אותו)</h4>
+  <p>
+    מערכת <b>עצמאית ומושלמת</b> — Backend שיודע לבדו להרים ולתחזק את כל ה-containers של llama.cpp,
+    LMM שיודע לנהל את הטרמינלים השונים (chat/utility/embedding/vision/reasoning),
+    ו-Smart Router שמשמש כ-<b>פרונט-אנד</b> — מציג את המצב, מאפשר שליטה, ובוחר ל-A0 איזה slot להשתמש בכל רגע.
+  </p>
+</div>
+
+<!-- =========================================================
+     SECTION 2 — Architecture map (3 layers)
+     ========================================================= -->
+<h2>2. ארכיטקטורה — שלוש שכבות</h2>
+<p class="sub">צבעים לפי איפה הקוד רץ: 🟠 host, 🔵 A0 container, 🟣 plugin code, 🟢 external.</p>
+
+<div class="arch">
+
+  <div class="layer">
+    <h5>🟠 Host (Windows) — Level 0</h5>
+
+    <div class="item">
+      <b>start_agent_zero.bat</b>
+      <div class="meta">C:\Users\frant\A0-0.9.7 working\</div>
+      תסריט הפעלה מרכזי: מרים Postgres, LMM manager, a0 container, llama.cpp containers, host helper.
+    </div>
+
+    <div class="item">
+      <b>Docker Engine</b>
+      <div class="meta">Docker Desktop</div>
+      מריץ את כל ה-containers (A0, llama.cpp, postgres, whiteboard).
+    </div>
+
+    <div class="item">
+      <b>llama.cpp containers</b>
+      <div class="meta">ghcr.io/ggml-org/llama.cpp:server-cuda</div>
+      קונטיינרים נפרדים: a0-llama-chat (8080), a0-llama-utility (8088), embedding (8082). מוגדרים ב-docker-compose.lmm.yml.
+    </div>
+
+    <div class="item">
+      <b>Host helper (tools/lmm_host_helper.py)</b>
+      <div class="meta">localhost:55501 (token auth)</div>
+      HTTP bridge: מאפשר ל-A0 container לשלוט ב-docker על ה-host בלי לחשוף את ה-docker socket.
+    </div>
+
+    <div class="item">
+      <b>Models directory</b>
+      <div class="meta">C:\Users\frant\A0-Data-Permanent\A0_v.adam\models</div>
+      קבצי GGUF פיזיים. ממופים לכל container כ-<code>/models</code> או <code>/a0/models</code>.
+    </div>
+  </div>
+
+  <div class="layer">
+    <h5>🔵 A0 Container — Level 1</h5>
+
+    <div class="item">
+      <b>launcher.py</b>
+      <div class="meta">/a0/usr/plugins/a0_lmm_router/launcher.py</div>
+      CLI עצמאי: <code>status / start / stop / restart</code>. מופעל מה-BAT ויכול לעבוד גם ידנית.
+    </div>
+
+    <div class="item">
+      <b>LlamaCppManager (singleton)</b>
+      <div class="meta">helpers/llama_cpp_manager.py</div>
+      הלב. קורא את ה-YAML, יוצר backend מתאים, מנהל lifecycle ו-health של כל slot.
+    </div>
+
+    <div class="item">
+      <b>Backends (3)</b>
+      <div class="meta">helpers/backends/{remote,docker,subprocess}_backend.py</div>
+      <code>remote</code>=HTTP client, <code>docker</code>=Docker SDK, <code>subprocess</code>=llama-server מקומי. ה-<code>factory.py</code> בוחר אוטומטית.
+    </div>
+
+    <div class="item">
+      <b>API handlers</b>
+      <div class="meta">api/*.py (8 endpoints)</div>
+      נחשפים תחת <code>/api/plugins/a0_lmm_router/&lt;name&gt;</code>. מטופלים ב-FastAPI של A0.
+    </div>
+
+    <div class="item">
+      <b>Smart Router extension</b>
+      <div class="meta">extensions/python/message_loop_start/_20_smart_router.py</div>
+      רץ לפני כל הודעת משתמש, מזהה workflow דרך <code>workflow_registry</code>, שם את ה-ID ב-<code>agent.set_data("smart_router_workflow", ...)</code>.
+    </div>
+
+    <div class="item">
+      <b>Compute monitor</b>
+      <div class="meta">helpers/compute_monitor.py</div>
+      קורא ל-<code>nvidia-smi</code> (VRAM/util/temp) ול-<code>psutil</code> (CPU/RAM).
+    </div>
+
+    <div class="item">
+      <b>Model recommender</b>
+      <div class="meta">helpers/model_recommender.py</div>
+      catalog של GGUFs + התאמה לחומרה. מפעיל <code>huggingface-cli download</code> להורדות.
+    </div>
+  </div>
+
+  <div class="layer">
+    <h5>🟣 WebUI (רץ בדפדפן של המשתמש)</h5>
+
+    <div class="item">
+      <b>dashboard.html</b>
+      <div class="meta">webui/dashboard.html</div>
+      מוקד הבקרה: סטטוס חי של כל ה-slots, GPU/CPU/RAM, כפתורי start/stop. polling כל 5ש'.
+    </div>
+
+    <div class="item">
+      <b>config.html</b>
+      <div class="meta">webui/config.html</div>
+      Settings → Router → תצורה: רשימת slots, מודלים, backend type.
+    </div>
+
+    <div class="item">
+      <b>dev-tracker.html</b>
+      <div class="meta">webui/dev-tracker.html</div>
+      מקטע לבדיקת מצב פיתוח (פאזות, באגים, APIs). פחות רלוונטי לייצור.
+    </div>
+
+    <div class="item">
+      <b>dashboard-store.js (Alpine store)</b>
+      <div class="meta">webui/js/dashboard-store.js</div>
+      state management, polling, קריאות API.
+    </div>
+  </div>
+</div>
+
+<!-- =========================================================
+     SECTION 3 — Ports map
+     ========================================================= -->
+<h2>3. מפת Ports — איפה כל דבר מאזין</h2>
+<div class="ports">
+  <div class="port"><div class="num">8080</div><div class="what">chat slot</div><div class="who">llama.cpp container · magistral_small_12</div></div>
+  <div class="port"><div class="num">8088</div><div class="what">utility slot</div><div class="who">llama.cpp container · phi35_mini</div></div>
+  <div class="port"><div class="num">8082</div><div class="what">embedding slot</div><div class="who">llama.cpp · nomic_embed</div></div>
+  <div class="port"><div class="num">8084</div><div class="what">vision slot</div><div class="who">מוגדר, מכובה כברירת מחדל</div></div>
+  <div class="port"><div class="num">8086</div><div class="what">reasoning slot</div><div class="who">מוגדר, מכובה כברירת מחדל</div></div>
+  <div class="port"><div class="num">8888</div><div class="what">Local Model Manager</div><div class="who">HTTP server נפרד של A0 (לא של הפלאגין)</div></div>
+  <div class="port"><div class="num">50080</div><div class="what">Agent Zero Web UI</div><div class="who">uvicorn/FastAPI · /ws · /api</div></div>
+  <div class="port"><div class="num">55501</div><div class="what">Host Helper</div><div class="who">lmm_host_helper.py · token-auth</div></div>
+  <div class="port"><div class="num">5433</div><div class="what">PostgreSQL (pgvector)</div><div class="who">knowledge_chunks · activity</div></div>
+  <div class="port"><div class="num">5050</div><div class="what">PGAdmin</div><div class="who">ניהול DB</div></div>
+  <div class="port"><div class="num">5173</div><div class="what">Whiteboard UI</div><div class="who">React/Vite container</div></div>
+  <div class="port"><div class="num">3000</div><div class="what">A0 secondary</div><div class="who">uvicorn secondary</div></div>
+</div>
+
+<!-- =========================================================
+     SECTION 4 — Startup Flow
+     ========================================================= -->
+<h2>4. זרימת ההדלקה — מ-BAT ל-slots חיים</h2>
+<div class="flow" style="grid-template-columns: repeat(5,1fr);">
+  <div class="flow-step">
+    <span class="num">1</span><strong>BAT run</strong><br/>
+    המשתמש מריץ <code>start_agent_zero.bat</code>. הסקריפט בודק Python, Docker, ומרים Postgres.
+  </div>
+  <div class="flow-step">
+    <span class="num">2</span><strong>LMM manager + A0</strong><br/>
+    מעלה את <code>local_model_manager</code> (port 8888), ואת container <code>agent-zero-2</code> (port 5080).
+  </div>
+  <div class="flow-step">
+    <span class="num">3</span><strong>llama.cpp compose</strong><br/>
+    <code>docker compose -f docker-compose.lmm.yml up -d</code> מרים slots של llama.cpp.
+  </div>
+  <div class="flow-step">
+    <span class="num">4</span><strong>Host helper</strong><br/>
+    מריץ <code>lmm_host_helper.py</code> ב-port 55501, מייצר token, ומעתיק אותו לכל container.
+  </div>
+  <div class="flow-step">
+    <span class="num">5</span><strong>launcher.py</strong><br/>
+    בתוך ה-container: <code>launcher.py start</code> — קורא config, בודק את ה-slots, מוודא גישה.
+  </div>
+</div>
+<p class="sub" style="margin-top:8px;">
+  לאחר שלב 5: כשהמשתמש פותח את WebUI, ה-<code>agent_init</code> extension רץ פעם נוספת (פעם ראשונה בכל agent חדש) ומוודא שהמנהל חי.
+</p>
+
+<!-- =========================================================
+     SECTION 5 — Configuration paths
+     ========================================================= -->
+<h2>5. Configuration — איפה כל הגדרה</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>הגדרה</th>
+      <th>נתיב</th>
+      <th>ברירת מחדל</th>
+      <th>איך משנים</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>רשימת slots (ports, מודלים, roles)</td>
+      <td><code>usr/plugins/a0_lmm_router/conf/llama_cpp_servers.yaml</code> → <code>active_slots</code></td>
+      <td>3 slots: chat/utility/embedding</td>
+      <td>עריכת YAML. <b>חייב לרענן launcher.</b></td>
+    </tr>
+    <tr>
+      <td>Backend type</td>
+      <td>אותו YAML → <code>global.backend</code></td>
+      <td><code>remote</code></td>
+      <td><code>remote | docker | subprocess | auto</code></td>
+    </tr>
+    <tr>
+      <td>מיקום ה-GGUFs</td>
+      <td>אותו YAML → <code>global.models_dir</code></td>
+      <td><code>${LLAMA_CPP_MODELS_DIR:-/a0/models}</code></td>
+      <td>משתנה סביבה <code>LLAMA_CPP_MODELS_DIR</code></td>
+    </tr>
+    <tr>
+      <td>URLs של llama.cpp servers</td>
+      <td>אותו YAML → <code>global.lmm_hosts</code></td>
+      <td><code>host.docker.internal:8080/8088/8082</code></td>
+      <td>עריכת dict של hosts</td>
+    </tr>
+    <tr>
+      <td>Auto-start בהעלאה</td>
+      <td>אותו YAML → <code>global.auto_start</code></td>
+      <td><code>true</code></td>
+      <td>הפוך ל-<code>false</code> ל-manual mode</td>
+    </tr>
+    <tr>
+      <td>Providers שנוספים ל-A0</td>
+      <td><code>conf/model_providers.yaml</code></td>
+      <td>3 entries מקומיים</td>
+      <td>עריכת YAML + רענון פלאגין</td>
+    </tr>
+    <tr>
+      <td>האם הפלאגין פעיל</td>
+      <td><code>usr/plugins/a0_lmm_router/.toggle-1</code></td>
+      <td>קיים → פעיל</td>
+      <td>שנה ל-<code>.toggle-0</code> או מחק לכיבוי</td>
+    </tr>
+    <tr>
+      <td>Config override per project</td>
+      <td><code>usr/projects/&lt;p&gt;/.a0proj/plugins/a0_lmm_router/config.json</code></td>
+      <td>לא קיים</td>
+      <td><code>per_project_config: true</code> במניפסט</td>
+    </tr>
+    <tr>
+      <td>chat/utility model של A0</td>
+      <td><code>usr/settings.json</code> או agent profile</td>
+      <td>openrouter/nemotron</td>
+      <td>Settings UI של A0 → Agent → Models</td>
+    </tr>
+    <tr>
+      <td>docker-compose של llama.cpp</td>
+      <td><code>C:\Users\frant\A0-0.9.7 working\docker-compose.lmm.yml</code></td>
+      <td>מוגדר</td>
+      <td>עריכת YAML של compose</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- =========================================================
+     SECTION 6 — API endpoints
+     ========================================================= -->
+<h2>6. API — שורת פקודות של הפלאגין</h2>
+<p class="sub">כל ה-endpoints חשופים תחת <code>POST /api/plugins/a0_lmm_router/&lt;name&gt;</code>. ה-UI והכלים משתמשים בהם.</p>
+
+<div class="grid">
+  <div class="card">
+    <span class="tag">API</span>
+    <h4>llamacpp_control</h4>
+    <div class="path">api/llamacpp_control.py</div>
+    <div class="desc">start / stop / restart של slot בודד (או all).</div>
+  </div>
+  <div class="card">
+    <span class="tag">API</span>
+    <h4>llamacpp_status</h4>
+    <div class="path">api/llamacpp_status.py</div>
+    <div class="desc">מחזיר סטטוס לכל slot — running, healthy, port, PID/container id, uptime.</div>
+  </div>
+  <div class="card">
+    <span class="tag">API</span>
+    <h4>llamacpp_list_models</h4>
+    <div class="path">api/llamacpp_list_models.py</div>
+    <div class="desc">רשימת GGUFs הזמינים ב-<code>models_dir</code>.</div>
+  </div>
+  <div class="card">
+    <span class="tag">API</span>
+    <h4>lmm_compute_stats</h4>
+    <div class="path">api/lmm_compute_stats.py</div>
+    <div class="desc">מטריקות חי של GPU/CPU/RAM — משמש את ה-dashboard ל-polling.</div>
+  </div>
+  <div class="card">
+    <span class="tag">API</span>
+    <h4>lmm_model_recommend</h4>
+    <div class="path">api/lmm_model_recommend.py</div>
+    <div class="desc">המלצות GGUFs בהתבסס על hardware inventory ב-YAML.</div>
+  </div>
+  <div class="card">
+    <span class="tag">API</span>
+    <h4>lmm_model_install</h4>
+    <div class="path">api/lmm_model_install.py</div>
+    <div class="desc">הורדה מ-HuggingFace דרך <code>huggingface-cli</code>.</div>
+  </div>
+  <div class="card">
+    <span class="tag">API</span>
+    <h4>lmm_fleet_ignite</h4>
+    <div class="path">api/lmm_fleet_ignite.py</div>
+    <div class="desc">מפעיל את כל ה-fleet דרך ה-host helper (כפתור "Ignite Fleet" ב-dashboard).</div>
+  </div>
+  <div class="card">
+    <span class="tag">API</span>
+    <h4>lmm_host_ignite</h4>
+    <div class="path">api/lmm_host_ignite.py</div>
+    <div class="desc">פקודות host-level (הרצת ה-BAT, Extinguish).</div>
+  </div>
+</div>
+
+<!-- =========================================================
+     SECTION 7 — Smart Router (frontend-to-be)
+     ========================================================= -->
+<h2>7. Smart Router — המצב הנוכחי</h2>
+
+<div class="callout gap">
+  <h4>⚠️ פער מרכזי לחזון</h4>
+  <p>
+    כרגע ה-Smart Router הוא <b>pattern matcher בלבד</b>.
+    הוא לא בוחר slot באופן דינמי — רק שם <code>workflow_id</code> במטאדטה.
+    בחירת ה-model ל-A0 (<code>chat_model</code>, <code>utility_model</code>) עדיין נעשית דרך Settings הרגיל של A0.
+    כדי להגשים את החזון ("smart router כפרונט-אנד") צריך להרחיב אותו: בחירת provider/model דינמית בכל הודעה.
+  </p>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <span class="tag">EXTENSION</span>
+    <h4>_20_smart_router.py</h4>
+    <div class="path">extensions/python/message_loop_start/_20_smart_router.py</div>
+    <div class="desc">
+      רץ על כל user message. מחלץ טקסט, קורא ל-<code>workflow_registry.route_request(msg)</code>,
+      ושם את ה-workflow_id ב-<code>agent.set_data()</code>. לא משנה model/provider.
+    </div>
+  </div>
+  <div class="card">
+    <span class="tag">HELPER</span>
+    <h4>workflow_registry.py</h4>
+    <div class="path">helpers/smart_router/workflow_registry.py</div>
+    <div class="desc">רשימת workflows + patterns להתאמה. כרגע ריק/טנטטיבי.</div>
+  </div>
+  <div class="card">
+    <span class="tag">HELPER</span>
+    <h4>session_models.py</h4>
+    <div class="path">helpers/smart_router/session_models.py</div>
+    <div class="desc">ייצוגי session (לא מממומש בפועל בגרסה הנוכחית).</div>
+  </div>
+</div>
+
+<!-- =========================================================
+     SECTION 8 — Agent tools
+     ========================================================= -->
+<h2>8. Tools — מה הסוכן יכול לקרוא</h2>
+
+<div class="grid">
+  <div class="card">
+    <span class="tag">TOOL</span>
+    <h4>llama_cpp_control</h4>
+    <div class="path">tools/llama_cpp_control.py</div>
+    <div class="desc">כלי שמאפשר לסוכן להפעיל/לכבות/לקבל סטטוס של slots במהלך שיחה.</div>
+  </div>
+  <div class="card">
+    <span class="tag">TOOL</span>
+    <h4>fleet_ignite</h4>
+    <div class="path">tools/fleet_ignite.py</div>
+    <div class="desc">מפעיל/מכבה את כל ה-fleet דרך ה-host helper (כלי לסוכן).</div>
+  </div>
+</div>
+
+<!-- =========================================================
+     SECTION 9 — Full file tree (accordion)
+     ========================================================= -->
+<h2>9. מבנה קבצים מלא</h2>
+
+<details>
+  <summary>usr/plugins/a0_lmm_router/ (פתח לראות את כל העץ)</summary>
+  <div class="body">
+<pre>
+a0_lmm_router/
+├── plugin.yaml                          Manifest (name, version, settings_sections, per_project_config)
+├── README.md                            תיעוד (17KB)
+├── .toggle-1                            פעיל (rename to .toggle-0 לכיבוי)
+├── launcher.py                          CLI: status/start/stop/restart — רץ בתוך container
+│
+├── conf/
+│   ├── llama_cpp_servers.yaml           ⚡ התצורה הראשית — slots + global + hardware
+│   └── model_providers.yaml             Providers שמוזרקים ל-A0 (llamacpp_local_chat/utility/embedding)
+│
+├── api/                                 8 HTTP endpoints
+│   ├── llamacpp_control.py              POST: start/stop/restart slot
+│   ├── llamacpp_status.py               GET-like: per-slot status
+│   ├── llamacpp_list_models.py          רשימת GGUFs ב-models_dir
+│   ├── lmm_compute_stats.py             מטריקות חי (nvidia-smi, psutil)
+│   ├── lmm_model_recommend.py           המלצות לפי hardware
+│   ├── lmm_model_install.py             HuggingFace download
+│   ├── lmm_fleet_ignite.py              Ignite all (דרך host helper)
+│   └── lmm_host_ignite.py               Host-level ops
+│
+├── extensions/
+│   ├── python/
+│   │   ├── agent_init/
+│   │   │   └── _10_init_servers.py      רץ בתחילת כל agent → מרים manager → DeferredTask start_all
+│   │   ├── message_loop_start/
+│   │   │   └── _20_smart_router.py      רץ לפני כל הודעה → workflow routing
+│   │   └── banners/                     (empty)
+│   └── webui/                           (empty placeholder)
+│
+├── helpers/                             "הליבה" של הפלאגין
+│   ├── llama_cpp_manager.py             ⚡ Singleton של LlamaCppManager (44KB — הלב)
+│   ├── compute_monitor.py               GPU/CPU/RAM metrics
+│   ├── model_recommender.py             Catalog + hardware matching
+│   │
+│   ├── backends/                        3 ריאליזציות
+│   │   ├── base.py                      InferenceBackend ABC + SlotStatus
+│   │   ├── factory.py                   auto-detection + create_backend()
+│   │   ├── remote_backend.py            HTTP client לקונטיינרים חיצוניים (default)
+│   │   ├── docker_backend.py            Docker SDK lifecycle
+│   │   └── subprocess_backend.py        llama-server כ-process מקומי
+│   │
+│   └── smart_router/
+│       ├── workflow_registry.py         רישום workflows + patterns
+│       └── session_models.py            (currently inert)
+│
+├── tools/                               כלים שהסוכן יכול לקרוא
+│   ├── llama_cpp_control.py             start/stop/status slot
+│   └── fleet_ignite.py                  ignite fleet via host helper
+│
+├── webui/                               WebUI של הפלאגין
+│   ├── dashboard.html                   ⚡ ה-dashboard הראשי (17KB)
+│   ├── config.html                      Settings UI (13KB)
+│   ├── dev-tracker.html                 Dev radiator (27KB)
+│   └── js/
+│       └── dashboard-store.js           Alpine store
+│
+├── _smoke_test.py                       smoke tests
+├── _e2e_test.py                         end-to-end tests
+├── _check_async.py                      async validation
+└── _fix_structure.py                    טעינה מחדש אחרי שינויי מבנה
+</pre>
+  </div>
+</details>
+
+<!-- =========================================================
+     SECTION 10 — Current state vs vision
+     ========================================================= -->
+<h2>10. המצב הנוכחי מול החזון</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>יכולת</th>
+      <th>המצב הנוכחי</th>
+      <th>בחזון</th>
+      <th>מה חסר</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>הפעלת llama.cpp containers</td>
+      <td>דרך <code>start_agent_zero.bat</code> + <code>docker-compose.lmm.yml</code></td>
+      <td>Backend עצמאי של הפלאגין מרים את הכל</td>
+      <td>להעביר את ה-compose לתוך הפלאגין ולהרים אוטומטית ב-<code>agent_init</code></td>
+    </tr>
+    <tr>
+      <td>ניהול "טרמינלים"</td>
+      <td>slots נפרדים לכל role (chat/utility/embedding)</td>
+      <td>כל slot הוא terminal מלא עם logs, חיי מדף, אפשרות hot-swap</td>
+      <td>UI מורחב: log viewer, hot-swap model, resource allocation</td>
+    </tr>
+    <tr>
+      <td>בחירת model ל-A0</td>
+      <td>סטטי ב-Settings</td>
+      <td>Smart Router בוחר דינמית לפי classifier</td>
+      <td>שכבת classifier (LLM-based) + hook ב-<code>agent.config.chat_model</code></td>
+    </tr>
+    <tr>
+      <td>Dashboard כ-UI ראשי</td>
+      <td>דף נפרד ב-WebUI של הפלאגין</td>
+      <td>Dashboard = הבית של Smart Router</td>
+      <td>הפיכת ה-dashboard ל-command center; הוספת "Send to chat" ו-"Switch model for session"</td>
+    </tr>
+    <tr>
+      <td>Model installer</td>
+      <td>API שקיים + כפתור ב-UI (לפי recommender)</td>
+      <td>GUI מלא — browse HF, compare, install</td>
+      <td>הרחבת <code>lmm_model_install</code> עם list + compare</td>
+    </tr>
+    <tr>
+      <td>עצמאות</td>
+      <td>תלוי ב-BAT, docker-compose חיצוני, host helper</td>
+      <td>הפלאגין מרים את הכל בעצמו ב-<code>agent_init</code></td>
+      <td>1) תיקיה <code>docker-compose</code> בתוך הפלאגין. 2) Auto-start של host helper אם חסר.</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- =========================================================
+     SECTION 11 — Known issues
+     ========================================================= -->
+<h2>11. בעיות ידועות</h2>
+
+<div class="callout danger">
+  <h4>🔴 Retry loop עם מודלים חלשים (פעיל כרגע)</h4>
+  <p>
+    ה-chat_model הנוכחי (<code>nvidia/nemotron-3-super-120b-a10b-free</code>) שוכח את <code>tool_args</code> ב-JSON →
+    A0 נכנס ללולאת retries של <code>fw.msg_misformat.md</code>. טופל על ידי פלאגין <b><code>_tool_args_guard</code></b> שהוספנו.
+    פתרון שורש: החלפת המודל.
+  </p>
+</div>
+
+<div class="callout gap">
+  <h4>🟡 Context Engine לא נגיש (localhost:8002 / 8003)</h4>
+  <p>השירותים שהפלאגין <code>context_engine</code> צריך לא רצים. לא משפיע על LMM Router אבל מרעיש ב-logs.</p>
+</div>
+
+<div class="callout gap">
+  <h4>🟡 Docker terminal extension שבור</h4>
+  <p>
+    <code>usr/plugins/docker_terminal/extensions/webui/chat-input-bottom-actions-end/terminal-button.html</code>
+    נכשל בטעינה (400) — נראה בקונסול של הדפדפן.
+  </p>
+</div>
+
+<!-- =========================================================
+     SECTION 12 — Action items for the vision
+     ========================================================= -->
+<h2>12. Action items — הצעות להשלמת החזון</h2>
+
+<div class="grid">
+  <div class="card">
+    <span class="tag" style="background:#1f3a24;color:#7ee2a0;">קל</span>
+    <h4>1. החלף chat_model למודל אמין</h4>
+    <div class="desc">Claude 3.5 Sonnet / GPT-4o / Llama 3.3 70B / Gemini 2.0 Flash. ישחרר מיד מ-retry loop ויחזיר תפוקה אמיתית מהסוכן.</div>
+  </div>
+
+  <div class="card">
+    <span class="tag" style="background:#1f3a24;color:#7ee2a0;">קל</span>
+    <h4>2. העתק docker-compose.lmm.yml לפלאגין</h4>
+    <div class="desc">
+      <code>usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml</code> + עדכון של launcher.py לפקד עליו.
+      ההעברה הזו הופכת את הפלאגין לעצמאי.
+    </div>
+  </div>
+
+  <div class="card">
+    <span class="tag" style="background:#2a2113;color:#fbc765;">בינוני</span>
+    <h4>3. בנה LLM-based classifier</h4>
+    <div class="desc">
+      שכבה מעל <code>_20_smart_router.py</code> שמשתמשת ב-utility slot (port 8088) לסווג הודעות
+      (chat / code / reason / search) ובוחרת provider.
+    </div>
+  </div>
+
+  <div class="card">
+    <span class="tag" style="background:#2a2113;color:#fbc765;">בינוני</span>
+    <h4>4. הרחב את ה-Dashboard ל-command center</h4>
+    <div class="desc">
+      הוסף: log viewer per slot (live tail), hot-swap model (בחירת GGUF חדש ל-slot),
+      ומעבר ל-"use this slot for current session".
+    </div>
+  </div>
+
+  <div class="card">
+    <span class="tag" style="background:#3a1f1f;color:#f6888b;">קשה</span>
+    <h4>5. Hook דינמי ל-chat_model</h4>
+    <div class="desc">
+      תיקון ב-core של A0 — או extension ל-<code>before_main_llm_call</code> — שקורא <code>smart_router_workflow</code>
+      וממפה ל-provider חדש בזמן אמת.
+    </div>
+  </div>
+
+  <div class="card">
+    <span class="tag" style="background:#3a1f1f;color:#f6888b;">קשה</span>
+    <h4>6. Host helper אוטומטי</h4>
+    <div class="desc">
+      כרגע ה-helper נפתח רק דרך ה-BAT. צריך מנגנון fallback: אם ה-helper לא זמין, API <code>lmm_host_ignite</code>
+      ינסה להעלות אותו דרך <code>subprocess.Popen</code> מהצד של A0 container (דרוש mount של docker socket).
+    </div>
+  </div>
+</div>
+
+<!-- =========================================================
+     SECTION 13 — Quick reference
+     ========================================================= -->
+<h2>13. Cheat sheet — פקודות נפוצות</h2>
+
+<pre>
+# === הפעלה מלאה ===
+start_agent_zero.bat                 # בהוסט — מעלה הכל
+
+# === בדיקת מצב מתוך container ===
+docker exec agent-zero-2 /opt/venv-a0/bin/python \
+    /a0/usr/plugins/a0_lmm_router/launcher.py status
+
+# === הפעלת slot בודד ===
+docker exec agent-zero-2 /opt/venv-a0/bin/python \
+    /a0/usr/plugins/a0_lmm_router/launcher.py start slot_chat
+
+# === עצירת כל ה-fleet ===
+docker exec agent-zero-2 /opt/venv-a0/bin/python \
+    /a0/usr/plugins/a0_lmm_router/launcher.py stop
+
+# === בדיקת בריאות של slot ישירות ===
+curl http://host.docker.internal:8080/health
+curl http://host.docker.internal:8088/health
+curl http://host.docker.internal:8082/health
+
+# === כיבוי הפלאגין (מבלי למחוק) ===
+ren usr\plugins\a0_lmm_router\.toggle-1 .toggle-0
+
+# === הפעלת הפלאגין ===
+ren usr\plugins\a0_lmm_router\.toggle-0 .toggle-1
+</pre>
+
+<!-- =========================================================
+     APPENDIX A — Tiny Router Analysis & Inspiration for Smart LLM Router
+     ========================================================= -->
+<h2>נספח א׳ — ניתוח Tiny Router והשראה ל-Smart LLM Router</h2>
+
+<p class="sub">
+  ניתוח מבני של הפלאגין <code>tiny_router</code> (נמצא ב-<code>usr/plugins/tiny_router/</code>)
+  וכיצד ניתן לאמץ את הרעיונות שלו לשיפור ה-<b>Smart LLM Router</b> שלך.
+</p>
+
+<div class="callout info">
+  <h4>מהו Tiny Router?</h4>
+  <p>
+    פלאגין ל-Agent Zero שמסווג כל הודעת משתמש באמצעות מודל DeBERTa-v3-small (44M פרמטרים, 172MB INT8 ONNX)
+    בזמן של <b>&lt;10ms על CPU</b>. המטרה: חיסכון של 30-50% בעלויות API על ידי:
+  </p>
+  <ul>
+    <li>דילוג על קריאות LLM לחלוטין עבור "canned responses" (confirmation, closure)</li>
+    <li>ניתוב אוטומטי ל-model presets זולים יותר עבור הודעות פשוטות</li>
+    <li>שימוש ב-chain של presets ל-failover אוטומטי כשמודל נכשל</li>
+  </ul>
+</div>
+
+<h3>א. ארכיטקטורת Tiny Router — רכיבים מרכזיים</h3>
+
+<div class="arch">
+  <div class="layer">
+    <h5>1. Extension Hook</h5>
+    <div class="item">
+      <b>_20_tiny_router.py</b>
+      <div class="meta">extensions/python/message_loop_start/</div>
+      רץ לפני כל הודעת משתמש (hook <code>message_loop_start</code>).
+      מחלץ טקסט, מסווג, מנתב, ומחיל preset override דרך <code>agent.context.set_data()</code>.
+    </div>
+    <div class="item">
+      <b>Lazy Loading</b>
+      <div class="meta">singleton pattern</div>
+      המודל וה-router נטענים רק בהודעה הראשונה — לא בעליית A0.
+    </div>
+  </div>
+
+  <div class="layer">
+    <h5>2. Classification Engine</h5>
+    <div class="item">
+      <b>DeBERTa-v3-small</b>
+      <div class="meta">tiny_router_helpers/model.py</div>
+      ONNX Runtime + INT8 quantization. ארבעה "heads":
+      <br/>• relation_to_previous (new/follow_up/correction/confirmation/cancellation/closure)
+      <br/>• actionability (none/review/act)
+      <br/>• retention (ephemeral/useful/remember)
+      <br/>• urgency (low/medium/high)
+    </div>
+    <div class="item">
+      <b>Temperature Calibration</b>
+      <div class="meta">temperature_scaling.json</div>
+      כל head מכוון עם temperature נפרד לדיוק confidence.
+    </div>
+  </div>
+
+  <div class="layer">
+    <h5>3. Decision & Routing</h5>
+    <div class="item">
+      <b>router.py</b>
+      <div class="meta">7-rule decision tree</div>
+      ממיר classification ל-<code>RouteAction</code>:
+      <code>CANNED</code> | <code>LIGHTWEIGHT</code> | <code>CONTEXT_HINT</code> | <code>STANDARD</code> | <code>URGENT</code>
+    </div>
+    <div class="item">
+      <b>preset_bridge.py</b>
+      <div class="meta">מיפוי ל-A0 presets</div>
+      ממיר RouteAction → preset name מתוך <code>_model_config</code> של A0.
+    </div>
+    <div class="item">
+      <b>failover.py</b>
+      <div class="meta">fallback_chain</div>
+      ניהול שרשרת presets ל-failover אוטומטי (timeout, rate limit, quota).
+    </div>
+  </div>
+</div>
+
+<h3>ב. זרימת עבודה (Flow)</h3>
+
+<div class="flow" style="grid-template-columns: repeat(6,1fr);font-size:12px;">
+  <div class="flow-step">
+    <span class="num">1</span><strong>User Message</strong><br/>
+    מגיע ל-agent
+  </div>
+  <div class="flow-step">
+    <span class="num">2</span><strong>Tiny Router</strong><br/>
+    Extension רץ (10ms ONNX)
+  </div>
+  <div class="flow-step">
+    <span class="num">3</span><strong>Classify</strong><br/>
+    4 heads × confidence scores
+  </div>
+  <div class="flow-step">
+    <span class="num">4</span><strong>Decision Tree</strong><br/>
+    בוחר RouteAction
+  </div>
+  <div class="flow-step">
+    <span class="num">5</span><strong>Preset Override</strong><br/>
+    <code>set_data("chat_model_override", {"preset_name": "X"})</code>
+  </div>
+  <div class="flow-step">
+    <span class="num">6</span><strong>Action</strong><br/>
+    CANNED=skip LLM, אחר=LLM עם preset
+  </div>
+</div>
+
+<h3>ג. קונפיגורציה — מה אפשר ללמוד</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>מנגנון</th>
+      <th>ב-Tiny Router</th>
+      <th>איך לאמץ ל-Smart LLM Router</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Thresholds</td>
+      <td><code>threshold_canned: 0.90</code>, <code>threshold_lightweight: 0.85</code></td>
+      <td>הוסף thresholds להחלטה מתי לעבור מ-local llama.cpp ל-OpenRouter</td>
+    </tr>
+    <tr>
+      <td>Phase system</td>
+      <td>Phase 1=log only, Phase 2=skip LLM</td>
+      <td>Phase 1: log routing decisions, Phase 2: apply preset override, Phase 3: skip LLM entirely</td>
+    </tr>
+    <tr>
+      <td>Preset mapping</td>
+      <td>Map: urgent→"Max Power", lightweight→"Cost Efficient"</td>
+      <td>Map: chat→slot_chat:8080, utility→slot_utility:8088, code→slot_reasoning</td>
+    </tr>
+    <tr>
+      <td>Fallback chain</td>
+      <td><code>["Balance", "Cost Efficient", "Local"]</code></td>
+      <td>שרשרת slots: [8080, 8088, openrouter/backup]</td>
+    </tr>
+    <tr>
+      <td>Stats tracking</td>
+      <td>Persistent JSON: savings, routes, inference time</td>
+      <td>לוג לכל routing decision + חישוב חיסכון (local vs API)</td>
+    </tr>
+    <tr>
+      <td>Canned responses</td>
+      <td>Templates ל-confirmation/closure</td>
+      <td>אפשר לשלב: תשובות מוכנות מראש ל-acknowledgments</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>ד. השוואה: Tiny Router vs Smart LLM Router הנוכחי</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>מאפיין</th>
+      <th>Tiny Router</th>
+      <th>a0_lmm_router Smart Router</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><b>מנוע סיווג</b></td>
+      <td>DeBERTa ONNX (&lt;10ms, לוקאלי)</td>
+      <td>Pattern matching (רגקס) — לא מודל</td>
+    </tr>
+    <tr>
+      <td><b>מה מסווג</b></td>
+      <td>relation, actionability, retention, urgency</td>
+      <td>רק workflow_id לפי patterns</td>
+    </tr>
+    <tr>
+      <td><b>בחירת model</b></td>
+      <td>✅ כן — preset override דינמי</td>
+      <td>❌ לא — רק workflow metadata</td>
+    </tr>
+    <tr>
+      <td><b>Failover</b></td>
+      <td>✅ כן — chain עם סיבות (timeout, rate limit)</td>
+      <td>❌ לא ממומש</td>
+    </tr>
+    <tr>
+      <td><b>Skip LLM</b></td>
+      <td>✅ CANNED responses (שלב 2)</td>
+      <td>❌ לא ממומש</td>
+    </tr>
+    <tr>
+      <td><b>Stats/חיסכון</b></td>
+      <td>✅ Persistent JSON + $ estimation</td>
+      <td>❌ לא ממומש</td>
+    </tr>
+    <tr>
+      <td><b>Integration</b></td>
+      <td>מושתל עמוק ב-loop דרך context.set_data()</td>
+      <td>רק extension metadata</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>ה. המלצות — מה לאמץ מהחזון שלך</h3>
+
+<div class="grid">
+  <div class="card">
+    <span class="tag" style="background:#1f3a24;color:#7ee2a0;">המלצה #1</span>
+    <h4>החלף pattern matching ב-classifier אמיתי</h4>
+    <div class="desc">
+      השתמש ב-utility slot (port 8088, phi35_mini) כ-classifier לכל הודעה.
+      Prompt: "Classify: chat/code/reason/search — respond JSON only".
+      זה ייתן דיוק גבוה בהרבה מרגקסים, בעלות של ~50ms.
+    </div>
+  </div>
+
+  <div class="card">
+    <span class="tag" style="background:#1f3a24;color:#7ee2a0;">המלצה #2</span>
+    <h4>הוסף preset/slot override דינמי</h4>
+    <div class="desc">
+      העתק את <code>preset_bridge.py</code> — ממשק לשינוי ה-model בזמן אמת.
+      במקום <code>set_data("chat_model_override", ...)</code>, תוכל לשנות את
+      <code>agent.config.chat_model</code> לפני כל קריאה ל-LLM.
+    </div>
+  </div>
+
+  <div class="card">
+    <span class="tag" style="background:#1f3a24;color:#7ee2a0;">המלצה #3</span>
+    <h4>ממש failover chain ל-slots</h4>
+    <div class="desc">
+      העתק את <code>failover.py</code> — זהה שגיאות (timeout, 429, 5xx) והחלף slot.
+      שרשרת: [slot_chat:8080, slot_utility:8088, openrouter/backup, canned].
+    </div>
+  </div>
+
+  <div class="card">
+    <span class="tag" style="background:#1f3a24;color:#7ee2a0;">המלצה #4</span>
+    <h4>Stats persistent + dashboard</h4>
+    <div class="desc">
+      העתק את <code>stats.py</code> — שמור כל routing decision ל-JSON,
+      חשב inference time + חיסכון (local vs API), הצג ב-dashboard.
+    </div>
+  </div>
+
+  <div class="card">
+    <span class="tag" style="background:#2a2113;color:#fbc765;">המלצה #5</span>
+    <h4>שלב Tiny Router כ-tier ראשון</h4>
+    <div class="desc">
+      השתמש ב-Tiny Router לסיווג ראשוני (10ms), ואז:
+      <br/>• CANNED → skip LLM
+      <br/>• STANDARD → Smart Router בוחר slot לפי סוג משימה
+      <br/>• URGENT → slot_chat:8080
+      <br/>• LIGHTWEIGHT → slot_utility:8088
+    </div>
+  </div>
+
+  <div class="card">
+    <span class="tag" style="background:#2a2113;color:#fbc765;">המלצה #6</span>
+    <h4>חיבור ל-dashboard הקיים</h4>
+    <div class="desc">
+      הוסף ל-<code>dashboard.html</code> שלך:
+      <br/>• "Last 10 routing decisions" table
+      <br/>• "Failover events" log
+      <br/>• "Estimated savings" counter
+    </div>
+  </div>
+</div>
+
+<h3>ו. קוד לדוגמה — אימוץ מ-Tiny Router</h3>
+
+<p>הנה תבניות שאפשר להעתיק ישירות:</p>
+
+<details>
+  <summary>1. Preset override pattern (מ-preset_bridge.py)</summary>
+  <div class="body">
+<pre>
+# Inside message_loop_start extension
+from helpers import plugins
+
+# Load current project config
+config = plugins.get_plugin_config("a0_lmm_router", agent=agent) or {}
+routing_config = config.get("slot_routing", {})
+
+# Map classification to slot URL
+slot_map = {
+    "chat": routing_config.get("chat_slot", "http://host.docker.internal:8080/v1"),
+    "code": routing_config.get("utility_slot", "http://host.docker.internal:8088/v1"),
+    "reason": routing_config.get("reasoning_slot", "http://host.docker.internal:8086/v1"),
+}
+
+# Apply override
+selected_slot = slot_map.get(classification, slot_map["chat"])
+agent.context.set_data("llm_override_url", selected_slot)
+</pre>
+  </div>
+</details>
+
+<details>
+  <summary>2. Stats recording (מ-stats.py)</summary>
+  <div class="body">
+<pre>
+import json
+from pathlib import Path
+
+def record_routing(route: str, slot_url: str, inference_ms: float):
+    stats_path = Path("usr/plugins/a0_lmm_router/data/routing_stats.json")
+    stats_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    stats = json.loads(stats_path.read_text()) if stats_path.exists() else {
+        "total": 0, "routes": {}, "avg_inference_ms": 0
+    }
+    
+    stats["total"] += 1
+    stats["routes"][route] = stats["routes"].get(route, 0) + 1
+    # Weighted moving average
+    stats["avg_inference_ms"] = (
+        stats["avg_inference_ms"] * (stats["total"] - 1) + inference_ms
+    ) / stats["total"]
+    
+    stats_path.write_text(json.dumps(stats, indent=2))
+</pre>
+  </div>
+</details>
+
+<details>
+  <summary>3. Failover detection (מ-failover.py)</summary>
+  <div class="body">
+<pre>
+FAILOVER_STATUSES = {408, 429, 500, 502, 503, 504}
+
+def should_failover_to_next_slot(exc: Exception) -> bool:
+    """Check if error warrants trying next slot in chain."""
+    status = getattr(exc, "status_code", None)
+    if status in FAILOVER_STATUSES:
+        return True
+    
+    text = str(exc).lower()
+    return any(marker in text for marker in [
+        "timeout", "rate limit", "quota exceeded", "connection error"
+    ])
+</pre>
+  </div>
+</details>
+
+<h3>ז. סיכום — חזון משולב</h3>
+
+<div class="callout vision">
+  <h4>"Smart LLM Router 2.0" — איך זה נראה</h4>
+  <p>
+    <b>שכבה 1:</b> Tiny Router (DeBERTa, 10ms) מסווג כל הודעה.<br/>
+    <b>שכבה 2:</b> Smart Router שלך מחליט slot ספציפי (llama.cpp slot_X או OpenRouter).<br/>
+    <b>פעולה:</b> preset_override מוחל לפני ה-LLM call.<br/>
+    <b>Failover:</b> אם slot נכשל → מעבר אוטומטי ל-slots הבאים בשרשרת.<br/>
+    <b>Stats:</b> כל החלטה נרשמת, חיסכון מחושב, מוצג ב-dashboard בזמן אמת.<br/>
+    <b>Result:</b> מערכת עצמאית שמחליטה בעצמה איזה LMM להשתמש, מתאוששת מכשלים,
+    ומפיקה דוחות חיסכון — הכל ללא התערבות המשתמש.
+  </p>
+</div>
+
+<p class="sub" style="margin-top:20px;">
+  <b>הערה:</b> כל הקוד של Tiny Router זמין ב-<code>usr/plugins/tiny_router/</code>.
+  המודל (172MB INT8 ONNX) נמצא ב-<code>artifacts/tiny-router/onnx/</code>.
+  ניתן להעתיק קבצים ספציפיים (<code>failover.py</code>, <code>stats.py</code>, <code>preset_bridge.py</code>)
+  ולהתאים אותם ל-slots שלך ב-a0_lmm_router.
+</p>
+
+<footer>
+  מסמך נוצר אוטומטית מסריקת קוד ב-<code>usr/plugins/a0_lmm_router/</code>,
+  <code>A0-0.9.7 working/start_agent_zero.bat</code>, ו-<code>A0-0.9.7 working/helpers/plugins.py</code>.
+  שמור לעיון — תעדכן אותי על סעיפים שלא התאימו למצב האמיתי אצלך ואקן.
+</footer>
+
+</main>
+</body>
+</html>

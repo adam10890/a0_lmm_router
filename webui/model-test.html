@@ -1,0 +1,270 @@
+<!-- a0_lmm_router Model Test panel — send a prompt to a slot and see the
+     structured response (content + reasoning_content + timings). Useful
+     for comparing models without routing through the full A0 agent. -->
+<div x-data>
+  <template x-if="true">
+    <div x-data="createModelTestStore()" x-init="init()"
+         style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--color-bg,#1e1e2e);color:var(--color-fg,#cdd6f4);min-height:100%;">
+
+      <style>
+        /* Share the Catppuccin Mocha tokens with the main dashboard. */
+        .mt-root { --ok:#a6e3a1; --warn:#f9e2af; --err:#f38ba8; --info:#89b4fa; --accent:#cba6f7; --teal:#94e2d5;
+                   --muted:#6c7086; --soft:#a6adc8; --surface:#181825; --surface2:#11111b; --border:#313244; --border-soft:#45475a;
+                   max-width:1100px; margin:0 auto; padding:20px 16px 32px; }
+        .mt-root * { box-sizing:border-box; }
+
+        .mt-hdr { display:flex; align-items:center; gap:12px; margin-bottom:18px; padding-bottom:14px; border-bottom:1px solid var(--border); }
+        .mt-hdr h1 { font-size:1.2rem; font-weight:700; margin:0; color:var(--color-fg,#cdd6f4); }
+        .mt-sub { font-size:.75rem; color:var(--muted); margin-left:auto; }
+
+        .mt-section { background:var(--surface); border:1px solid var(--border); border-radius:10px; margin-bottom:14px; overflow:hidden; }
+        .mt-section-head { padding:10px 16px; background:var(--color-bg,#1e1e2e); border-bottom:1px solid var(--border);
+                           font-size:.8rem; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:var(--info); }
+        .mt-section-body { padding:14px 16px; }
+
+        .mt-field { display:flex; flex-direction:column; gap:6px; margin-bottom:12px; }
+        .mt-field label { font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
+        .mt-field select, .mt-field textarea, .mt-field input {
+          font-family:inherit; font-size:.85rem; padding:8px 10px; border-radius:6px;
+          background:var(--surface2); color:var(--color-fg,#cdd6f4); border:1px solid var(--border);
+        }
+        .mt-field textarea { resize:vertical; min-height:90px; font-family:'SF Mono','Menlo','Consolas',monospace; }
+        .mt-field select:focus, .mt-field textarea:focus, .mt-field input:focus { outline:none; border-color:var(--info); }
+
+        .mt-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
+
+        .btn { font-family:inherit; font-size:.78rem; font-weight:600; padding:7px 14px; border-radius:6px;
+               border:1px solid transparent; cursor:pointer; transition:all .15s; display:inline-flex; align-items:center; gap:6px; }
+        .btn:disabled { opacity:.5; cursor:not-allowed; }
+        .btn-primary { background:#89b4fa20; color:var(--info); border-color:#89b4fa60; }
+        .btn-primary:hover:not(:disabled) { background:#89b4fa35; border-color:var(--info); }
+        .btn-ghost { background:transparent; color:var(--soft); border-color:var(--border); }
+        .btn-ghost:hover:not(:disabled) { background:var(--surface2); color:var(--color-fg,#cdd6f4); }
+
+        .mt-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:8px; margin-bottom:10px; }
+        .mt-stat { background:var(--surface2); border:1px solid var(--border); border-radius:6px; padding:8px 10px; }
+        .mt-stat-label { font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin-bottom:4px; }
+        .mt-stat-value { font-size:.92rem; font-weight:700; color:var(--color-fg,#cdd6f4); font-family:'SF Mono','Menlo','Consolas',monospace; }
+        .mt-stat-value.ok { color:var(--ok); }
+        .mt-stat-value.warn { color:var(--warn); }
+        .mt-stat-value.err { color:var(--err); }
+
+        .mt-answer, .mt-reasoning { background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:12px 14px; font-size:.86rem;
+                                     line-height:1.55; white-space:pre-wrap; word-break:break-word; font-family:'SF Mono','Menlo','Consolas',monospace; }
+        .mt-answer { color:var(--color-fg,#cdd6f4); border-color:var(--border-soft); }
+        .mt-reasoning { color:var(--soft); background:#181825; border-left:3px solid var(--accent); }
+        .mt-reasoning-hdr { display:flex; align-items:center; gap:8px; font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em;
+                            color:var(--accent); cursor:pointer; user-select:none; margin-bottom:6px; }
+        .mt-reasoning-hdr .caret { transition:transform .2s; }
+        .mt-reasoning-hdr .caret.open { transform:rotate(90deg); }
+
+        .mt-error { background:#f38ba820; border:1px solid #f38ba860; color:var(--err); padding:10px 12px; border-radius:6px; font-size:.82rem; }
+        .mt-empty { color:var(--muted); font-size:.82rem; font-style:italic; padding:12px; text-align:center; }
+
+        .badge { display:inline-block; padding:2px 8px; border-radius:12px; font-size:.68rem; font-weight:700; letter-spacing:.04em;
+                 background:#89b4fa20; color:var(--info); border:1px solid #89b4fa40; }
+      </style>
+
+      <div class="mt-root">
+
+        <div class="mt-hdr">
+          <h1>🧪 Model Test</h1>
+          <span class="mt-sub" x-text="slots.length ? slots.length + ' slot' + (slots.length===1?'':'s') + ' available' : 'loading slots…'"></span>
+        </div>
+
+        <!-- ── Input ─────────────────────────────────────────── -->
+        <div class="mt-section">
+          <div class="mt-section-head">Request</div>
+          <div class="mt-section-body">
+
+            <div class="mt-row">
+              <div class="mt-field">
+                <label for="mt-slot">Slot</label>
+                <select id="mt-slot" x-model="slot">
+                  <template x-for="s in slots" :key="s.id">
+                    <option :value="s.id" x-text="s.id + ' — ' + s.role + (s.healthy ? '' : ' (unhealthy)')"></option>
+                  </template>
+                </select>
+              </div>
+              <div class="mt-field">
+                <label for="mt-max">Max tokens</label>
+                <input id="mt-max" type="number" min="1" max="8192" x-model.number="maxTokens">
+              </div>
+              <div class="mt-field">
+                <label for="mt-temp">Temperature</label>
+                <input id="mt-temp" type="number" step="0.05" min="0" max="2" x-model.number="temperature">
+              </div>
+            </div>
+
+            <div class="mt-field">
+              <label for="mt-sys">System (optional)</label>
+              <textarea id="mt-sys" rows="2" x-model="system" placeholder="You are a helpful assistant…"></textarea>
+            </div>
+
+            <div class="mt-field">
+              <label for="mt-prompt">Prompt</label>
+              <textarea id="mt-prompt" rows="4" x-model="prompt" placeholder="Ask the model anything…"></textarea>
+            </div>
+
+            <div style="display:flex; gap:8px; align-items:center;">
+              <button class="btn btn-primary" @click="send()" :disabled="loading || !prompt.trim() || !slot"
+                      x-text="loading ? 'Sending…' : 'Send'"></button>
+              <button class="btn btn-ghost" @click="reset()" :disabled="loading">Clear</button>
+              <span x-show="result && result.host" class="badge" x-text="'→ ' + (result && result.host)"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Error ─────────────────────────────────────────── -->
+        <template x-if="error">
+          <div class="mt-section">
+            <div class="mt-section-body">
+              <div class="mt-error" x-text="error"></div>
+            </div>
+          </div>
+        </template>
+
+        <!-- ── Response ──────────────────────────────────────── -->
+        <template x-if="result && result.ok">
+          <div class="mt-section">
+            <div class="mt-section-head">Response</div>
+            <div class="mt-section-body">
+
+              <div class="mt-stats">
+                <div class="mt-stat">
+                  <div class="mt-stat-label">Finish</div>
+                  <div class="mt-stat-value"
+                       :class="result.finish_reason === 'stop' ? 'ok' : 'warn'"
+                       x-text="result.finish_reason || '—'"></div>
+                </div>
+                <div class="mt-stat">
+                  <div class="mt-stat-label">Prompt tokens</div>
+                  <div class="mt-stat-value" x-text="(result.usage && result.usage.prompt_tokens) || '—'"></div>
+                </div>
+                <div class="mt-stat">
+                  <div class="mt-stat-label">Completion tokens</div>
+                  <div class="mt-stat-value" x-text="(result.usage && result.usage.completion_tokens) || '—'"></div>
+                </div>
+                <div class="mt-stat">
+                  <div class="mt-stat-label">Generation tok/s</div>
+                  <div class="mt-stat-value ok"
+                       x-text="(result.timings && result.timings.predicted_per_second) ? result.timings.predicted_per_second.toFixed(1) : '—'"></div>
+                </div>
+                <div class="mt-stat">
+                  <div class="mt-stat-label">Prompt tok/s</div>
+                  <div class="mt-stat-value"
+                       x-text="(result.timings && result.timings.prompt_per_second) ? result.timings.prompt_per_second.toFixed(1) : '—'"></div>
+                </div>
+                <div class="mt-stat">
+                  <div class="mt-stat-label">Round-trip</div>
+                  <div class="mt-stat-value" x-text="(result.duration_ms || 0) + ' ms'"></div>
+                </div>
+              </div>
+
+              <!-- Reasoning (collapsible, only when present) -->
+              <template x-if="result.reasoning_content">
+                <div style="margin-bottom:12px;">
+                  <div class="mt-reasoning-hdr" @click="showReasoning = !showReasoning">
+                    <span class="caret" :class="{ open: showReasoning }">▶</span>
+                    <span>Reasoning (<span x-text="(result.reasoning_content || '').length"></span> chars)</span>
+                  </div>
+                  <div class="mt-reasoning" x-show="showReasoning" x-text="result.reasoning_content"></div>
+                </div>
+              </template>
+
+              <!-- Answer -->
+              <div style="font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin-bottom:6px;">Answer</div>
+              <template x-if="result.content && result.content.trim()">
+                <div class="mt-answer" x-text="result.content"></div>
+              </template>
+              <template x-if="!(result.content && result.content.trim())">
+                <div class="mt-empty" x-text="result.reasoning_content ? '(empty — all tokens spent on reasoning; increase max_tokens)' : '(empty response)'"></div>
+              </template>
+            </div>
+          </div>
+        </template>
+
+      </div>
+    </div>
+  </template>
+</div>
+
+<script>
+  function createModelTestStore() {
+    return {
+      slots: [],
+      slot: '',
+      prompt: '',
+      system: '',
+      maxTokens: 512,
+      temperature: 0.7,
+      loading: false,
+      result: null,
+      error: '',
+      showReasoning: true,
+
+      async init() {
+        try {
+          const r = await fetch('/plugins/a0_lmm_router/llamacpp_status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+          });
+          const data = await r.json();
+          this.slots = (data.slots || []).map(s => ({
+            id: s.id,
+            role: s.role,
+            healthy: s.health && s.health.reachable && (s.health.http_status === 200 || s.health.http_status === null),
+          }));
+          // Default to first healthy chat slot, else first slot.
+          const firstHealthy = this.slots.find(s => s.healthy && s.role === 'chat')
+                            || this.slots.find(s => s.healthy)
+                            || this.slots[0];
+          if (firstHealthy) this.slot = firstHealthy.id;
+        } catch (e) {
+          this.error = 'Failed to load slot list: ' + (e && e.message || e);
+        }
+      },
+
+      reset() {
+        this.prompt = '';
+        this.system = '';
+        this.result = null;
+        this.error = '';
+      },
+
+      async send() {
+        this.loading = true;
+        this.result = null;
+        this.error = '';
+        try {
+          const body = {
+            slot: this.slot,
+            prompt: this.prompt,
+            max_tokens: this.maxTokens,
+            temperature: this.temperature,
+          };
+          if (this.system && this.system.trim()) body.system = this.system.trim();
+
+          const r = await fetch('/plugins/a0_lmm_router/lmm_test_prompt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          const data = await r.json();
+          if (!data.ok) {
+            this.error = data.error || 'Unknown error';
+            if (data.body) this.error += ' — ' + String(data.body).slice(0, 300);
+            if (data.available) this.error += ' (available: ' + data.available.join(', ') + ')';
+          } else {
+            this.result = data;
+          }
+        } catch (e) {
+          this.error = 'Request failed: ' + (e && e.message || e);
+        } finally {
+          this.loading = false;
+        }
+      },
+    };
+  }
+</script>
