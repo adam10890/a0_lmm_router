@@ -17,7 +17,17 @@ from typing import Optional
 
 log = logging.getLogger("a0_lmm_router.context_calculator")
 
-# Default fallback values if metadata reading fails
+# Minimum context required by Agent Zero system prompts per role
+# Based on actual system prompt sizes and typical usage patterns
+_MIN_CTX_SIZES = {
+    "chat": 16384,      # Full system prompt (~3.3K tokens) + history + tool results. 8K will choke.
+    "utility": 8192,    # Shorter prompt + specific task + tool result. 16K is better but 8K is minimum.
+    "embedding": 4096,  # Embedding model - minimal context needed
+    "vision": 16384,    # Vision tasks need context for image + text
+    "reasoning": 16384, # Reasoning tasks need context for complex chains
+}
+
+# Default fallback values if metadata reading fails (same as minimums for safety)
 _DEFAULT_CTX_SIZES = {
     "chat": 32768,
     "utility": 16384,
@@ -193,14 +203,15 @@ def calculate_optimal_context(
     # VRAM available for this slot (total - other slots - safety margin)
     vram_for_slot = available_vram_gb - other_slots_vram_gb - _VRAM_SAFETY_MARGIN_GB
     if vram_for_slot < vram_for_weights:
-        # Not enough VRAM even for weights
+        # Not enough VRAM even for weights - use minimum required context
+        min_ctx = _MIN_CTX_SIZES.get(slot, 8192)
         return {
-            "recommended_ctx": _DEFAULT_CTX_SIZES.get(slot, 8192),
+            "recommended_ctx": min_ctx,
             "n_ctx_train": n_ctx_train,
             "vram_for_kv": 0.0,
             "vram_for_weights": vram_for_weights,
             "total_vram_needed": vram_for_weights,
-            "reasoning": f"Insufficient VRAM: {vram_for_slot:.1f}GB available, {vram_for_weights:.1f}GB needed for weights. Using default context.",
+            "reasoning": f"Insufficient VRAM: {vram_for_slot:.1f}GB available, {vram_for_weights:.1f}GB needed for weights. Using minimum context {min_ctx} for role '{slot}'.",
         }
 
     # VRAM available for KV cache
@@ -225,27 +236,34 @@ def calculate_optimal_context(
 
         max_ctx_from_vram = round_to_power_of_2(max_ctx_from_vram)
 
-        # Apply model's max context limit
+        # Apply model's max context limit AND role minimum
+        min_ctx = _MIN_CTX_SIZES.get(slot, 8192)
         if n_ctx_train:
             recommended_ctx = min(max_ctx_from_vram, n_ctx_train)
+            # Ensure we meet the minimum for this role
+            recommended_ctx = max(recommended_ctx, min_ctx)
             reasoning = (
                 f"Model supports {n_ctx_train} tokens. "
                 f"VRAM allows {max_ctx_from_vram} tokens. "
+                f"Role '{slot}' requires minimum {min_ctx} tokens. "
                 f"Using {recommended_ctx} tokens."
             )
         else:
-            recommended_ctx = max_ctx_from_vram
+            recommended_ctx = max(max_ctx_from_vram, min_ctx)
             reasoning = (
                 f"Model max context unknown. "
                 f"VRAM allows {max_ctx_from_vram} tokens. "
+                f"Role '{slot}' requires minimum {min_ctx} tokens. "
                 f"Using {recommended_ctx} tokens."
             )
     else:
-        # Fallback: use default context size
-        recommended_ctx = _DEFAULT_CTX_SIZES.get(slot, 8192)
+        # Fallback: use minimum required context for this role
+        min_ctx = _MIN_CTX_SIZES.get(slot, 8192)
+        recommended_ctx = max(_DEFAULT_CTX_SIZES.get(slot, 8192), min_ctx)
         reasoning = (
             f"Could not calculate from metadata. "
-            f"Using default context of {recommended_ctx} tokens."
+            f"Role '{slot}' requires minimum {min_ctx} tokens. "
+            f"Using {recommended_ctx} tokens."
         )
 
     # Calculate actual KV cache size for recommended context

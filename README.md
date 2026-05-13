@@ -446,6 +446,17 @@ The dashboard now supports installing arbitrary GGUF models from HuggingFace and
 
 The system now automatically calculates the optimal context window size for each model assignment. This ensures you get the maximum context your hardware can support without exceeding VRAM limits.
 
+**Critical constraint: Agent Zero system prompts**
+
+The context window must be large enough to accommodate Agent Zero's system prompts for each role:
+
+- **Chat agent**: Minimum 16K tokens (real minimum) - full system prompt (~3.3K tokens) + conversation history + tool results. With 8K the agent will choke after a few steps.
+- **Utility/subagent**: Minimum 8K tokens (16K recommended) - shorter prompt + specific task + tool result
+- **Embedding**: Minimal context needed (for vectors only)
+- **Vision/Reasoning**: Minimum 16K tokens
+
+This is why qwen3.5-9B runs as both chat and utility - smaller models cannot handle the system prompt overhead.
+
 **How it works:**
 
 1. When you assign a model to a slot, the host helper reads the GGUF metadata to extract:
@@ -454,6 +465,7 @@ The system now automatically calculates the optimal context window size for each
    - `n_embd`: Embedding dimension
 
 2. It calculates the optimal context based on:
+   - **Role minimum**: Never falls below the minimum required for that role (chat: 16K, utility: 8K, etc.)
    - **Model's max context**: Never exceeds the model's training limit
    - **Available VRAM**: Accounts for model weights + KV cache + other running slots
    - **KV cache formula**: `ctx_size * 2 * n_layer * n_embd * bytes_per_token`
@@ -464,7 +476,8 @@ The system now automatically calculates the optimal context window size for each
 
 **Example:**
 
-For a 24GB RTX 4090 with Qwen3.5-9B (5.7GB file):
+For a 24GB RTX 4090 with Qwen3.5-9B (5.7GB file) assigned to chat:
+- Role minimum: 16K tokens (required for system prompt)
 - Model supports 262K tokens (n_ctx_train)
 - Available VRAM after weights: ~18GB
 - Calculated optimal context: ~65K tokens
@@ -472,11 +485,11 @@ For a 24GB RTX 4090 with Qwen3.5-9B (5.7GB file):
 
 **Fallback behavior:**
 
-If GGUF metadata cannot be read or calculation fails, the system uses sensible defaults:
-- Chat: 32K tokens
-- Utility: 16K tokens
+If GGUF metadata cannot be read or calculation fails, the system uses the role minimum:
+- Chat: 32K tokens (minimum 16K enforced)
+- Utility: 16K tokens (minimum 8K enforced)
 - Embedding: 8K tokens
-- Vision/Reasoning: 32K tokens
+- Vision/Reasoning: 32K tokens (minimum 16K enforced)
 
 This design means:
 - No proxy/router between A0 and slots needed
