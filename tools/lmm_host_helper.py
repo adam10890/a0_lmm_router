@@ -47,6 +47,13 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import parse_qs, urlparse, unquote
 
+# Add helpers to path for context calculator
+sys.path.insert(0, str(Path(__file__).parent.parent / "helpers"))
+try:
+    from context_calculator import calculate_optimal_context
+except ImportError:
+    calculate_optimal_context = None
+
 # Optional huggingface_hub for model downloads
 try:
     from huggingface_hub import hf_hub_download, HfApi
@@ -239,6 +246,15 @@ _SLOT_ENV_KEYS = {
     "reasoning": "REASONING_MODEL_PATH",
 }
 
+_SLOT_CTX_KEYS = {
+    "chat": "CHAT_CTX_SIZE",
+    "utility": "UTILITY_CTX_SIZE",
+    "embedding": "EMBED_CTX_SIZE",
+    "embed": "EMBED_CTX_SIZE",
+    "vision": "VISION_CTX_SIZE",
+    "reasoning": "REASONING_CTX_SIZE",
+}
+
 
 def _rewrite_env_slot_model(env_path: Path, slot: str, model_path: str) -> bool:
     """Rewrite the MODEL_PATH for a slot in the .env file."""
@@ -275,6 +291,32 @@ def _get_current_model_path(env_path: Path, slot: str) -> str:
         if line.startswith(f"{key}="):
             return line[len(key)+1:].strip()
     return ""
+
+
+def _rewrite_env_slot_ctx(env_path: Path, slot: str, ctx_size: int) -> bool:
+    """Rewrite the CTX_SIZE for a slot in the .env file."""
+    key = _SLOT_CTX_KEYS.get(slot.lower())
+    if not key:
+        return False
+
+    lines = []
+    if env_path.exists():
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+
+    # Update or append the key
+    new_lines = []
+    found = False
+    for line in lines:
+        if line.startswith(f"{key}="):
+            new_lines.append(f"{key}={ctx_size}")
+            found = True
+        else:
+            new_lines.append(line)
+    if not found:
+        new_lines.append(f"{key}={ctx_size}")
+
+    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -976,11 +1018,47 @@ class Handler(BaseHTTPRequestHandler):
             model_path = model.get("path", "")
             full_model_path = f"/models/{model_path}/{model_file}" if model_path else f"/models/{model_file}"
 
-            # Rewrite env
+            # Calculate optimal context size if context calculator is available
+            ctx_calc_result = None
+            if calculate_optimal_context:
+                try:
+                    # Get GPU VRAM from hardware scan
+                    gpus = _detect_gpus_for_scan()
+                    total_vram_gb = sum(g.get("total_vram_mb", 0) / 1024 for g in gpus) if gpus else 0.0
+
+                    # Calculate VRAM used by other running slots (rough estimate)
+                    other_slots_vram_gb = 0.0
+                    for other_slot in ["chat", "utility", "embedding", "vision", "reasoning"]:
+                        if other_slot != slot.lower():
+                            other_model_id = _get_current_model_path(env_path, other_slot)
+                            if other_model_id:
+                                # Rough estimate: file size * 1.15
+                                other_model = manifest.get("models", {}).get(other_model_id.split("/")[-1].replace(".gguf", ""))
+                                if other_model:
+                                    other_slots_vram_gb += other_model.get("size_gb", 0) * 1.15
+
+                    # Get full model file path on host for context calculator
+                    host_model_path = str(Path(models_dir) / model_path / model_file) if model_path else str(Path(models_dir) / model_file)
+
+                    ctx_calc_result = calculate_optimal_context(
+                        host_model_path,
+                        slot.lower(),
+                        total_vram_gb,
+                        other_slots_vram_gb,
+                    )
+                except Exception as e:
+                    # Log error but continue with default context
+                    print(f"[WARNING] Context calculation failed: {e}")
+
+            # Rewrite env with model path
             ok = _rewrite_env_slot_model(env_path, slot, full_model_path)
             if not ok:
                 self._send_json(400, {"ok": False, "error": f"invalid slot '{slot}'"})
                 return
+
+            # Rewrite env with calculated context size
+            if ctx_calc_result and ctx_calc_result.get("recommended_ctx"):
+                _rewrite_env_slot_ctx(env_path, slot, ctx_calc_result["recommended_ctx"])
 
             restarted = False
             if apply_now:
@@ -998,7 +1076,17 @@ class Handler(BaseHTTPRequestHandler):
                     result = _run_docker_compose(self.server.compose_path, "up", "-d", "--force-recreate", service)
                     restarted = result.get("ok", False)
 
-            self._send_json(200, {"ok": True, "slot": slot, "model_id": model_id, "restarted": restarted, "model_path": full_model_path})
+            response_data = {
+                "ok": True,
+                "slot": slot,
+                "model_id": model_id,
+                "restarted": restarted,
+                "model_path": full_model_path,
+            }
+            if ctx_calc_result:
+                response_data["context_calculation"] = ctx_calc_result
+
+            self._send_json(200, response_data)
 
         elif parsed.path == "/models/delete":
             model_id = body.get("model_id", "").strip()

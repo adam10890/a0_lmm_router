@@ -434,8 +434,49 @@ The dashboard now supports installing arbitrary GGUF models from HuggingFace and
 - **One process = one model**: Each `llama-server` container loads exactly one GGUF via `--model`. To change models, the container is recreated with a new `--model` arg.
 - **Restart-to-swap**: When you assign a model, the host helper:
   1. Rewrites the `*_MODEL_PATH` in `docker-compose.lmm.env`
-  2. Runs `docker compose up -d --force-recreate <service>` for that slot only
-  3. Other slots are unaffected; A0 keeps talking to the same stable host:port
+  2. Automatically calculates optimal context window size based on:
+     - GGUF metadata (max training context `n_ctx_train`)
+     - Available GPU VRAM
+     - Model size and other running slots
+  3. Rewrites the `*_CTX_SIZE` in `docker-compose.lmm.env` with the calculated value
+  4. Runs `docker compose up -d --force-recreate <service>` for that slot only
+  5. Other slots are unaffected; A0 keeps talking to the same stable host:port
+
+### Automatic Context Window Sizing
+
+The system now automatically calculates the optimal context window size for each model assignment. This ensures you get the maximum context your hardware can support without exceeding VRAM limits.
+
+**How it works:**
+
+1. When you assign a model to a slot, the host helper reads the GGUF metadata to extract:
+   - `n_ctx_train`: The model's maximum training context length
+   - `n_layer`: Number of layers
+   - `n_embd`: Embedding dimension
+
+2. It calculates the optimal context based on:
+   - **Model's max context**: Never exceeds the model's training limit
+   - **Available VRAM**: Accounts for model weights + KV cache + other running slots
+   - **KV cache formula**: `ctx_size * 2 * n_layer * n_embd * bytes_per_token`
+
+3. The calculated context is rounded down to a power of 2 for efficiency
+
+4. The `*_CTX_SIZE` environment variable is updated in `docker-compose.lmm.env`
+
+**Example:**
+
+For a 24GB RTX 4090 with Qwen3.5-9B (5.7GB file):
+- Model supports 262K tokens (n_ctx_train)
+- Available VRAM after weights: ~18GB
+- Calculated optimal context: ~65K tokens
+- Result: `CHAT_CTX_SIZE=65536`
+
+**Fallback behavior:**
+
+If GGUF metadata cannot be read or calculation fails, the system uses sensible defaults:
+- Chat: 32K tokens
+- Utility: 16K tokens
+- Embedding: 8K tokens
+- Vision/Reasoning: 32K tokens
 
 This design means:
 - No proxy/router between A0 and slots needed
