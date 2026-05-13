@@ -36,12 +36,15 @@ This plugin replaces the deprecated `a0_lmm` and `a0_smart_router` plugins with 
 
 ### Backend
 
-- **Multi-backend LMM support** — `remote` (HTTP to pre-running containers), `docker` (Docker SDK), `subprocess` (host-native `llama-server`)
+- **Fleet model management** — centralized model operations via host helper (list, install, delete, assign)
+- **Transactional assignment** — model assignments with automatic rollback on failure
+- **Download job tracking** — progress monitoring for model installations with cancellation support
+- **HF token management** — secure HuggingFace token handling for private models
+- **Fleet upgrade** — llama.cpp image upgrade with rollback support
 - **llama.cpp slot control** — start/stop individual slots or all at once via API
 - **Health monitoring** — polling `/health`, `/slots`, `/metrics`, `/props` of each llama-server
 - **Real-time compute stats** — GPU (VRAM, utilization, temp) via `nvidia-smi`, CPU/RAM via `psutil`
-- **Model recommender** — hardware-aware recommendations from a curated GGUF catalog
-- **Model installer** — one-click download of GGUF models from HuggingFace via `huggingface-cli`
+- **Model recommender** — delegates to llmfit_advisor plugin with curated fallback
 - **Smart router** — classifies incoming messages and selects the best slot (planned: LLM-based classifier via utility slot)
 
 ### Frontend
@@ -68,26 +71,35 @@ This plugin replaces the deprecated `a0_lmm` and `a0_smart_router` plugins with 
 ┌─────────────────────────────────────────────────────────────────┐
 │                  API Handlers (api/*.py)                        │
 │  llamacpp_control · llamacpp_status · llamacpp_list_models      │
-│  lmm_compute_stats · lmm_model_recommend · lmm_model_install    │
+│  lmm_model_install · lmm_model_recommend                        │
+│  fleet_status · set_hf_token · clear_hf_token                   │
+│  delete_model · assign_model · fleet_upgrade                     │
+│  job_status · cancel_job                                         │
 └────────┬──────────────────┬─────────────────────┬───────────────┘
          ▼                  ▼                     ▼
 ┌─────────────────┐  ┌──────────────────┐  ┌──────────────────┐
-│ LlamaCppManager │  │ ComputeMonitor   │  │ ModelRecommender │
-│ (backends/…)    │  │ (nvidia-smi,     │  │ (catalog,        │
+│ Fleet Models    │  │ ComputeMonitor   │  │ ModelRecommender │
+│ (fleet_models)  │  │ (nvidia-smi,     │  │ (llmfit_advisor,  │
 │                 │  │  psutil)         │  │  huggingface-cli)│
 └────────┬────────┘  └──────────────────┘  └──────────────────┘
+         │
+         │ HTTP via X-Token auth
          ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│         Backend adapters (helpers/backends/)                    │
-│  ┌─────────────┐  ┌─────────────┐  ┌──────────────────────┐    │
-│  │ remote      │  │ docker      │  │ subprocess           │    │
-│  │ (HTTP)      │  │ (SDK)       │  │ (llama-server.exe)   │    │
-│  └─────────────┘  └─────────────┘  └──────────────────────┘    │
-└─────────────────────────────────────────────────────────────────┘
+│              Host Helper (lmm_host_helper.py)                    │
+│  - Model manifest management                                      │
+│  - Download jobs with progress tracking                           │
+│  - Model assignment (transactional with rollback)                │
+│  - HF token management                                           │
+│  - Fleet upgrade (llama.cpp image pull + restart)               │
+└────────┬────────────────────────────────────────────────────────┘
+         │
+         │ Docker Compose control
          ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                  llama.cpp server instances                     │
-│   a0-llama-chat:8080  ·  a0-llama-utility:8088  ·  :8082        │
+│                  Docker Compose Fleet                            │
+│   usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml + .env      │
+│   a0-llama-chat:8080  ·  a0-llama-utility:8088  ·  embed:8082  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -197,7 +209,7 @@ services:
 
 networks:
   a0-lmm-net:
-    external: true          # created by docker-compose.lmm.yml
+    external: true          # created by usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml
 ```
 
 Pros: works out of the box with Docker Desktop on Windows/macOS; the LMM
@@ -223,7 +235,7 @@ services:
 
 networks:
   a0-lmm-net:
-    external: true          # created by docker-compose.lmm.yml
+    external: true          # created by usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml
 ```
 
 ```yaml
@@ -237,7 +249,7 @@ global:
 ```
 
 Optional hardening: remove the `ports:` stanzas from
-`docker-compose.lmm.yml` so the fleet is reachable only from inside
+`usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml` so the fleet is reachable only from inside
 `a0-lmm-net`.
 
 Pros: llama endpoints are invisible from the host; cleaner DNS; easier
@@ -250,6 +262,188 @@ model #2 when you want the fleet "locked down" behind Docker's internal
 network or when multiple agents / projects will share the same fleet.
 
 ---
+
+## Fleet Model Management
+
+The plugin now uses a centralized fleet model management system via the host helper. This replaces the old local model manager with a more robust architecture.
+
+### Architecture
+
+- **Host Helper** (`lmm_host_helper.py`) — Runs on the Windows host, exposes HTTP API on port 55501
+- **Fleet Models Abstraction** (`helpers/fleet_models.py`) — Python client library for host helper communication
+- **Model Manifest** — JSON file tracking installed models, assignments, and download jobs
+- **Docker Compose** — `usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml` + `.env` for fleet configuration
+
+### Host Helper
+
+The host helper provides:
+
+- Model manifest management (add, remove, update models)
+- Download jobs with progress tracking (via `huggingface-cli download`)
+- Model assignment to slots (chat, utility, embed)
+- Transactional assignment with automatic rollback on failure
+- HuggingFace token management for private models
+- Fleet upgrade (pull new llama.cpp image, restart containers)
+- Job status polling and cancellation
+
+Authentication is via `X-Token` header using a token from `A0_LMM_HOST_TOKEN_PATH` environment variable.
+
+### Model Manifest
+
+The manifest file tracks:
+
+```json
+{
+  "models": [
+    {
+      "model_id": "qwen3.5_9b",
+      "repo_id": "bartowski/Qwen3.5-9B-GGUF",
+      "filename": "Qwen3.5-9B-Q4_K_M.gguf",
+      "role": "chat",
+      "assigned_slot": "chat",
+      "size_gb": 5.7,
+      "pending_assignment": false
+    }
+  ],
+  "jobs": [
+    {
+      "job_id": "uuid",
+      "repo_id": "...",
+      "filename": "...",
+      "status": "downloading|completed|failed|cancelled",
+      "progress": 75
+    }
+  ]
+}
+```
+
+### Transactional Assignment
+
+When assigning a model to a slot:
+
+1. Save previous assignment state (model's current slot, slot's current model)
+2. Mark model as `pending_assignment: true`
+3. Write environment variable to `usr/plugins/a0_lmm_router/docker/docker-compose.lmm.env`
+4. Restart the Docker service
+5. Wait for health check
+6. On success: clear `pending_assignment` flag
+7. On failure: rollback to previous state, restore previous model to slot
+
+The GUI shows a PENDING badge for models with `pending_assignment: true` and disables assign/delete buttons during assignment.
+
+### Docker Compose Configuration
+
+Model paths and parameters are configured via environment variables in `usr/plugins/a0_lmm_router/docker/docker-compose.lmm.env`:
+
+```env
+LMM_CHAT_MODEL=/models/chat/qwen3.5_9b/Qwen3.5-9B-Q4_K_M.gguf
+LMM_CHAT_CTX_SIZE=65536
+LMM_CHAT_N_PARALLEL=1
+LMM_CHAT_N_BATCH=512
+LMM_CHAT_FLASH_ATTN=1
+
+LMM_UTILITY_MODEL=/models/utility/qwen3.5_9b/Qwen3.5-9B-Q4_K_M.gguf
+LMM_UTILITY_CTX_SIZE=16384
+LMM_UTILITY_N_PARALLEL=1
+LMM_UTILITY_N_BATCH=512
+LMM_UTILITY_FLASH_ATTN=1
+
+LMM_EMBED_MODEL=/models/embed/nomic-embed-text-v1.5.Q4_K_M.gguf
+LMM_EMBED_CTX_SIZE=8192
+LMM_EMBED_N_PARALLEL=1
+LMM_EMBED_N_BATCH=512
+LMM_EMBED_FLASH_ATTN=0
+```
+
+The `usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml` file references these variables for each service.
+
+### Optimization Flags Reference
+
+All flags are **opt-in** — they are not passed to llama.cpp unless the
+corresponding env var is set in `.env`. This keeps existing setups
+unchanged.
+
+| Flag | Env Var | What It Does | When To Use |
+|------|---------|-------------|-------------|
+| `--no-mmap` | `<SLOT>_NO_MMAP=1` | Pin full model in RAM at startup | Faster init, needs enough RAM for full model |
+| `--mlock` | `<SLOT>_MLOCK=1` | Lock model memory, prevent OS swap | Reduces latency spikes; needs `memlock:-1` in compose (already set) |
+| `--n-cpu-moe N` | `<SLOT>_CPU_MOE=N` | Offload N MoE experts to CPU | For MoE models that exceed VRAM (e.g. Qwen3.6-35B-A3B) |
+| `--cache-type-k X` | `<SLOT>_CACHE_TYPE_K=X` | KV cache K quantization | Halves KV cache VRAM; values: `f16`, `q8_0`, `q5_0`, `q4_0` |
+| `--cache-type-v X` | `<SLOT>_CACHE_TYPE_V=X` | KV cache V quantization | Same as above for V cache |
+
+**Example:** To enable quantized KV cache for the chat slot, uncomment in `.env`:
+```env
+CHAT_CACHE_TYPE_K=q4_0
+CHAT_CACHE_TYPE_V=q4_0
+```
+Then restart: `docker compose -f usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml up -d`
+
+**TurboQuant** (`--ctk-v` / `--ctv-v`) is from a fork and not supported
+by the official `ghcr.io/ggml-org/llama.cpp:server-cuda` image. Use
+`--cache-type-k` / `--cache-type-v` instead.
+
+### Removal of Local Model Manager
+
+The old local model manager has been retired. All model management operations now go through the host helper and Docker Compose fleet.
+
+Changes made:
+- Removed local model manager startup/shutdown from `start_agent_zero.bat` and `stop_agent_zero.bat`
+- Removed local model manager health checks from `lmm_manager.bat` and `status_agent_zero.bat`
+- Replaced local model manager APIs with fleet model management APIs
+- Updated GUI config panel to use fleet status and model management
+
+----
+
+## GUI-Driven Model Installation (v1.2.2)
+
+The dashboard now supports installing arbitrary GGUF models from HuggingFace and assigning them to slots directly from the WebUI.
+
+### Installing a Model from HuggingFace
+
+1. Open the **Dashboard** (Settings → Plugins → LMM Router → Dashboard button)
+2. Scroll to the **Install Model** section
+3. Enter:
+   - **Repo ID**: e.g. `Jiunsong/supergemma4-26b-uncensored-gguf-v2` or `OBLITERATUS/gemma-4-E4B-it-OBLITERATED`
+   - **Filename**: the `.gguf` file name from that repo (e.g. `supergemma4-26b-uncensored-q4_k_m.gguf`)
+   - **Role** (optional): chat, utility, embedding, or vision — helps with organization
+4. Click **Download** — a progress bar shows download status
+5. The model appears in **Installed Models** when complete
+
+### Assigning a Model to a Slot
+
+1. In the **llama.cpp Slots** section, each slot shows:
+   - Current status (healthy/unhealthy/stopped)
+   - A dropdown with all installed models
+   - **Assign** button (disabled if no model selected)
+   - **Load** / **Unload** buttons for VRAM management
+
+2. Select a model from the dropdown and click **Assign**
+3. The slot's container restarts automatically with the new model
+4. A spinner shows "Restarting container…" during the swap (~10-90s depending on model size)
+
+### VRAM-Aware Load/Unload
+
+- **Load**: Starts the slot's container with its currently assigned model
+- **Unload**: Stops the container, freeing VRAM
+- The UI shows a warning if loading a model would exceed available VRAM
+- For your 24GB RTX 4090: keep only one large chat model loaded at a time (e.g. supergemma4-26b @ ~16-18GB OR gemma-4-E4B @ ~3-5GB)
+
+### How It Works (Architecture)
+
+- **Files on disk**: Multiple GGUFs live in the shared host models folder (`C:/Users/frant/A0-Data-Permanent/A0_v.adam/models`), mounted read-only at `/models` in every container
+- **One process = one model**: Each `llama-server` container loads exactly one GGUF via `--model`. To change models, the container is recreated with a new `--model` arg.
+- **Restart-to-swap**: When you assign a model, the host helper:
+  1. Rewrites the `*_MODEL_PATH` in `docker-compose.lmm.env`
+  2. Runs `docker compose up -d --force-recreate <service>` for that slot only
+  3. Other slots are unaffected; A0 keeps talking to the same stable host:port
+
+This design means:
+- No proxy/router between A0 and slots needed
+- 10-90s swap time (model load from disk into VRAM)
+- Only one big model resident at a time fits in 24GB VRAM
+- Multiple models can be installed and ready for quick swap
+
+----
 
 ## Usage
 
@@ -297,19 +491,32 @@ network or when multiple agents / projects will share the same fleet.
 
 All endpoints are POST and accept JSON bodies. Path prefix: `/plugins/a0_lmm_router/`
 
+### Fleet Model Management (via Host Helper)
+
+| Endpoint | Body | Returns | Status |
+|---|---|---|---|
+| `fleet_status` | `{}` | `{ ok, fleet_status, hf_token_configured }` | **live** |
+| `set_hf_token` | `{ token }` | `{ ok, message }` | **live** |
+| `clear_hf_token` | `{}` | `{ ok, message }` | **live** |
+| `delete_model` | `{ model_id }` | `{ ok, message }` | **live** |
+| `assign_model` | `{ slot, model_id, apply_now }` | `{ ok, message }` | **live** |
+| `fleet_upgrade` | `{}` | `{ ok, message }` | **live** |
+| `fleet_upgrade_rollback` | `{}` | `{ ok, message }` | **live** |
+| `job_status` | `{ job_id }` | `{ ok, job }` | **live** |
+| `cancel_job` | `{ job_id }` | `{ ok, message }` | **live** |
+
+### Legacy Slot Control
+
 | Endpoint | Body | Returns | Status |
 |---|---|---|---|
 | `llamacpp_status` | `{}` | `{ ok, slots: [...] }` | **live** |
 | `llamacpp_control` | `{ data: { operation, server } }` | `{ ok, message }` | **live** |
-| `llamacpp_list_models` | `{}` | `{ ok, models, models_dir }` | **live** |
+| `llamacpp_list_models` | `{}` | `{ ok, models }` | **live** |
 | `lmm_compute_stats` | `{}` | `{ ok, gpu, cpu, ram, slots }` | **live** |
 | `lmm_model_recommend` | `{ role?, max_vram_gb? }` | `{ ok, recommendations }` | **live** |
-| `lmm_model_install` | `{ model_id }` | `{ ok, message, path }` | **live** |
+| `lmm_model_install` | `{ repo_id, filename, role? }` | `{ ok, job_id, message }` | **live** |
 | `lmm_test_prompt` | `{ slot, prompt, max_tokens?, temperature?, system? }` | `{ ok, content, reasoning_content, usage, timings, ... }` | **live** |
 | `lmm_host_ignite` | `{ action: ignite\|extinguish\|status\|run-bat\|health }` | `{ ok, http_status, stdout, stderr }` | **live** |
-| `lmm_host_helper` | Host-side HTTP bridge for container control + GPU stats from A0 container | Flask server on port 55501 | **live** |
-| `lmm_inference` | `{ prompt, slot?, params? }` | `{ ok, response }` | *planned* |
-| `lmm_task_classify` | `{ message }` | `{ ok, task_type, complexity }` | *planned* |
 
 ### Example: get compute snapshot
 
@@ -339,12 +546,15 @@ Response:
 
 Opens when the user clicks **Settings → LMM Router**. Provides:
 
+- Fleet status (host helper version, llama.cpp image version, HF token status)
+- Fleet models list with assign/delete buttons and pending badges
+- Install model modal (repo, filename, role)
+- Active jobs section with progress tracking and cancel button
+- HF token management (set/clear token modal)
+- Fleet upgrade controls (upgrade/rollback)
 - Status badge (RUNNING / IDLE)
 - **DASHBOARD** button → opens `dashboard.html` as a modal
 - **DEV STATUS** button → opens `dev-tracker.html` as a modal
-- Slot list with per-slot start/stop buttons
-- Model dropdown with GGUF files from `models_dir`
-- Plugin settings form (bound to `plugin.yaml` `settings_sections`)
 
 ### `dashboard.html` — Real-time Monitor
 
@@ -570,8 +780,8 @@ Chronological record of configuration changes and troubleshooting sessions.
 
 | File | Change |
 |------|--------|
-| `docker-compose.lmm.yml` | Chat slot: Phi-4 path → Qwen3.5-9B path, `ctx-size 16384` → `65536` |
-| `docker-compose.lmm.yml` | Utility slot: `ctx-size 65536` → `16384` (VRAM conservation) |
+| `usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml` | Chat slot: Phi-4 path → Qwen3.5-9B path, `ctx-size 16384` → `65536` |
+| `usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml` | Utility slot: `ctx-size 65536` → `16384` (VRAM conservation) |
 | `llama_cpp_servers.yaml` | Chat model_id → `qwen3.5_9b`, context_size → `65536` |
 | `llama_cpp_servers.yaml` | Utility context_size → `16384` |
 | `model_providers.yaml` | Generic IDs `local-chat`/`local-utility` → map to `qwen3.5_9b` |
@@ -934,7 +1144,7 @@ See `docs/lmm_plugins_survey.md` for the full cross-plugin analysis.
 
 - `ghcr.io/ggml-org/llama.cpp:server-cuda` (GPU slots)
 - `ghcr.io/ggml-org/llama.cpp:server` (CPU slots)
-- Managed via `docker-compose.lmm.yml` in the A0 repo root
+- Managed via `usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml` (inside the plugin)
 
 ---
 
@@ -963,7 +1173,7 @@ changed the UI port from `50001` to `5080`).
    their published ports + `--alias` arg. Populate slot config from that.
 2. **Host-helper introspection (preferred in Docker Desktop).**
    New endpoint on `tools/lmm_host_helper.py`: `/compose-ls` which runs
-   `docker compose -f docker-compose.lmm.yml ps --format json` on the host
+   `docker compose -f usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml ps --format json` on the host
    and returns the container/port list. The plugin calls this on startup
    and caches the result. Requires only the existing host-helper token —
    no extra privileges inside A0.

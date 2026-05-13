@@ -1,7 +1,7 @@
 name: a0_lmm_router
 title: "LMM Router"
-description: "Unified LMM server management + smart routing. Backend: llama.cpp slot control, health monitoring, remote/docker/subprocess backends, model recommendation & install. Frontend: real-time dashboard, compute monitoring, model finder."
-version: "1.0.0"
+description: "Unified LMM server management + smart routing. Backend: llama.cpp slot control, health monitoring, remote/docker/subprocess backends, model recommendation & install, GUI-driven multi-model slot assignment. Frontend: real-time dashboard, compute monitoring, model finder, HF install form, VRAM-aware Load/Unload."
+version: "1.2.2"
 author: "frantz"
 settings_sections:
   - router

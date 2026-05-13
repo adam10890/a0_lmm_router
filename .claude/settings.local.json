@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(gsd:do)",
+      "Skill(gsd:do:*)",
+      "Bash(python -m py_compile helpers/tier_catalog.py helpers/hardware_inspector.py helpers/slot_recommender.py api/lmm_slot_recommendations.py)"
+    ]
+  }
+}

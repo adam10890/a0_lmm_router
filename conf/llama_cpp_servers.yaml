@@ -26,7 +26,6 @@ active_slots:
   - id: slot_chat
     port: 8080
     model_id: qwen3_5_9b
-    model_path: "/models/utility/qwen3.5_9b/Qwen3.5-9B-Q4_K_M.gguf"
     role: chat
     # Qwen3.5-9B @ Q4_K_M ≈ 5.7GB weights + 9GB KV@64K = ~14.7GB (fits on 24GB)
     context_size: 65536
@@ -40,7 +39,6 @@ active_slots:
   - id: slot_utility
     port: 8088
     model_id: qwen3_5_9b
-    model_path: "/models/utility/qwen3.5_9b/Qwen3.5-9B-Q4_K_M.gguf"
     role: utility
     # qwen3.5-9B @ Q4_K_M ≈ 5.7GB weights + ~2.3GB KV@16K = ~8GB (fits alongside chat 64K on 24GB)
     context_size: 16384
@@ -54,7 +52,6 @@ active_slots:
   - id: slot_embedding
     port: 8082
     model_id: nomic_embed
-    model_path: "/models/embedding/nomic/nomic-embed-text-v1.5.Q4_K_M.gguf"
     role: embedding
     # Embeddings rarely need >8K; 8K gives headroom without wasting VRAM.
     context_size: 8192
@@ -79,13 +76,24 @@ slot_defaults:
   fit_ctx_min: 4096
   extra_args: []
 
+  # ── Optimization flags (opt-in, all default off) ─────────────
+  # no_mmap: pin full model in RAM (needs enough RAM)
+  # mlock: lock model memory, prevent OS swap (needs memlock:-1)
+  # cpu_moe: offload N MoE experts to CPU (for models > VRAM)
+  # cache_type_k / cache_type_v: KV cache quantization (f16|q8_0|q5_0|q4_0)
+  no_mmap: false
+  mlock: false
+  cpu_moe: null
+  cache_type_k: null
+  cache_type_v: null
+
 # -----------------------------------------------------------------
 # Global settings
 # -----------------------------------------------------------------
 global:
   # Master switch consulted by launcher.py (NOT by LlamaCppManager).
   # When false, launcher.py exits cleanly without touching Docker/subprocess.
-  auto_start: true
+  auto_start: false
 
   # Backend used for slot lifecycle ops.
   #   remote     — plugin is an HTTP client to pre-running llama-server containers
@@ -109,7 +117,7 @@ global:
 
   # Models live on the host; mounted into any managed containers.
   # Override via env LLAMA_CPP_MODELS_DIR if your layout differs.
-  models_dir: "${LLAMA_CPP_MODELS_DIR:-/a0/models}"
+  models_dir: ""
 
   # Subprocess backend settings (only used when backend=subprocess).
   llama_cpp_path: "/usr/local/bin"

@@ -58,40 +58,55 @@ def _resolve_conf_path() -> str:
     here = Path(__file__).resolve()
     # .../usr/plugins/a0_lmm_router/api/llamacpp_status.py
     #    parents[1] = a0_lmm_router, parents[4] = /a0
+    env_conf = os.environ.get("A0_LMM_ROUTER_CONFIG", "")
     plugin_conf = str(here.parents[1] / "conf" / "llama_cpp_servers.yaml")
     root_conf = str(here.parents[4] / "conf" / "llama_cpp_servers.yaml")
-    return plugin_conf if os.path.exists(plugin_conf) else root_conf
+    if env_conf and os.path.exists(env_conf):
+        return env_conf
+    return root_conf if os.path.exists(root_conf) else plugin_conf
 
 
 class LlamacppStatus(ApiHandler):
     async def process(self, input: dict, request: Request) -> dict:
-        from usr.plugins.a0_lmm_router.helpers.llama_cpp_manager import LlamaCppManager
-
         try:
-            conf_path = _resolve_conf_path()
-            # Reset singleton so config edits show up without a container restart.
-            LlamaCppManager._instance = None  # noqa: SLF001
-            manager = LlamaCppManager.get_instance(conf_path)
+            import yaml
 
-            lmm_hosts = (manager.global_config or {}).get("lmm_hosts", {}) or {}
-            backend = (manager.global_config or {}).get("backend", "auto")
+            conf_path = _resolve_conf_path()
+            with open(conf_path, "r", encoding="utf-8") as fh:
+                cfg = yaml.safe_load(fh) or {}
+
+            global_cfg = cfg.get("global", {}) or {}
+            lmm_hosts = global_cfg.get("lmm_hosts", {}) or {}
+            backend = global_cfg.get("backend", "auto")
 
             slots = []
-            for sid, srv in manager.servers.items():
-                cfg = srv.config
-                host = lmm_hosts.get(cfg.role.value, "host.docker.internal")
-                host_only = host.split(":")[0] if ":" in host else host
-                probe = await _probe_http(host_only, cfg.port)
+            for slot in cfg.get("active_slots", []) or []:
+                if not slot or not slot.get("enabled", True):
+                    continue
+
+                sid = slot.get("id", f"slot_{slot.get('port', 'unknown')}")
+                role = slot.get("role", "chat")
+                port = int(slot.get("port", 0) or 0)
+                host = lmm_hosts.get(role, "host.docker.internal")
+                if ":" in host:
+                    host_only, host_port = host.rsplit(":", 1)
+                    probe_port = int(host_port)
+                else:
+                    host_only = host
+                    probe_port = port
+                probe = await _probe_http(host_only, probe_port)
+                running = bool(probe.get("reachable"))
 
                 slots.append({
                     "id": sid,
-                    "port": cfg.port,
-                    "role": cfg.role.value,
-                    "model_id": cfg.model_id or cfg.specialty or "unknown",
-                    "model_path": cfg.model_path,
-                    "enabled": cfg.enabled,
-                    "status": srv.status.value,
-                    "host": f"{host_only}:{cfg.port}",
+                    "port": probe_port,
+                    "role": role,
+                    "model_id": slot.get("model_id", "unknown"),
+                    "model_path": "",
+                    "enabled": slot.get("enabled", True),
+                    "running": running,
+                    "status": "running" if running else "stopped",
+                    "host": f"{host_only}:{probe_port}",
                     "health": probe,
                 })
             return {

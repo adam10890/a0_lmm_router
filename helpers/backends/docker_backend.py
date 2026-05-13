@@ -318,6 +318,28 @@ class DockerBackend(InferenceBackend):
         if draft:
             cmd.extend(["--model-draft", f"{CONTAINER_MODELS_DIR}/{draft}"])
 
+        # ── Optimization flags (opt-in, all default off) ─────────────
+        # NOTE: active backend is "remote" (compose-managed containers).
+        # These flags are inert until backend is switched to "docker".
+
+        if config.get("no_mmap"):
+            cmd.append("--no-mmap")
+
+        if config.get("mlock"):
+            cmd.append("--mlock")
+
+        cpu_moe = config.get("cpu_moe")
+        if cpu_moe is not None and cpu_moe > 0:
+            cmd.extend(["--n-cpu-moe", str(cpu_moe)])
+
+        cache_type_k = config.get("cache_type_k")
+        if cache_type_k:
+            cmd.extend(["--cache-type-k", str(cache_type_k)])
+
+        cache_type_v = config.get("cache_type_v")
+        if cache_type_v:
+            cmd.extend(["--cache-type-v", str(cache_type_v)])
+
         return cmd
 
     def _build_env(self, config: Dict[str, Any]) -> Dict[str, str]:

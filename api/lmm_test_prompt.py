@@ -37,6 +37,7 @@ import time
 from pathlib import Path
 
 import aiohttp
+import yaml
 from flask import Request
 
 from helpers.api import ApiHandler
@@ -49,26 +50,32 @@ REQUEST_TIMEOUT_SEC = 120
 def _resolve_conf_path() -> str:
     """Same self-contained resolver as llamacpp_status — kept local to avoid
     depending on `helpers.files` (which imports the fragile simpleeval)."""
+    env_path = os.environ.get("A0_LMM_ROUTER_CONFIG", "").strip()
+    if env_path:
+        return env_path
     here = Path(__file__).resolve()
     plugin_conf = str(here.parents[1] / "conf" / "llama_cpp_servers.yaml")
     root_conf = str(here.parents[4] / "conf" / "llama_cpp_servers.yaml")
     return plugin_conf if os.path.exists(plugin_conf) else root_conf
 
 
-def _resolve_slot(manager, slot_key: str):
-    """Accept either a slot id (`slot_chat`) or a role (`chat`). Returns
-    the matching ServerInstance or None."""
+def _resolve_slot(config: dict, slot_key: str):
     if not slot_key:
-        return None
-    # Direct id match first
-    if slot_key in manager.servers:
-        return manager.servers[slot_key]
-    # Role match
-    for srv in manager.servers.values():
-        role = getattr(srv.config.role, "value", str(srv.config.role))
-        if role == slot_key:
-            return srv
-    return None
+        return None, None
+    active_slots = config.get("active_slots", []) or []
+    for slot in active_slots:
+        if not slot or not slot.get("enabled", True):
+            continue
+        slot_id = slot.get("id", f"slot_{slot.get('port', 'unknown')}")
+        if slot_id == slot_key:
+            return slot_id, slot
+    for slot in active_slots:
+        if not slot or not slot.get("enabled", True):
+            continue
+        slot_id = slot.get("id", f"slot_{slot.get('port', 'unknown')}")
+        if str(slot.get("role", "")) == slot_key:
+            return slot_id, slot
+    return None, None
 
 
 class LmmTestPrompt(ApiHandler):
@@ -83,27 +90,35 @@ class LmmTestPrompt(ApiHandler):
             return {"ok": False, "error": "prompt is required (non-empty string)"}
 
         try:
-            from usr.plugins.a0_lmm_router.helpers.llama_cpp_manager import LlamaCppManager
-
             conf_path = _resolve_conf_path()
-            LlamaCppManager._instance = None  # noqa: SLF001
-            manager = LlamaCppManager.get_instance(conf_path)
+            with open(conf_path, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f) or {}
 
-            srv = _resolve_slot(manager, slot_key)
-            if srv is None:
-                available = sorted(manager.servers.keys())
+            slot_id, cfg = _resolve_slot(config, slot_key)
+            if cfg is None:
+                available = sorted(
+                    slot.get("id", f"slot_{slot.get('port', 'unknown')}")
+                    for slot in config.get("active_slots", []) or []
+                    if slot and slot.get("enabled", True)
+                )
                 return {
                     "ok": False,
                     "error": f"unknown slot: {slot_key!r}",
                     "available": available,
                 }
 
-            cfg = srv.config
-            lmm_hosts = (manager.global_config or {}).get("lmm_hosts", {}) or {}
-            role_val = getattr(cfg.role, "value", str(cfg.role))
-            host_cfg = lmm_hosts.get(role_val, "host.docker.internal")
-            host_only = host_cfg.split(":")[0] if ":" in host_cfg else host_cfg
-            base_url = f"http://{host_only}:{cfg.port}"
+            global_config = config.get("global", {}) or {}
+            lmm_hosts = global_config.get("lmm_hosts", {}) or {}
+            role_val = str(cfg.get("role", ""))
+            port = int(cfg.get("port", 0) or 0)
+            host_cfg = str(lmm_hosts.get(role_val, f"host.docker.internal:{port}"))
+            host_cfg = host_cfg.replace("http://", "").replace("https://", "").split("/", 1)[0]
+            host_only = host_cfg
+            if ":" in host_cfg:
+                host_only, port_text = host_cfg.rsplit(":", 1)
+                if port_text.isdigit():
+                    port = int(port_text)
+            base_url = f"http://{host_only}:{port}"
         except Exception as exc:
             return {"ok": False, "error": f"slot resolution failed: {type(exc).__name__}: {exc}"}
 
@@ -137,7 +152,7 @@ class LmmTestPrompt(ApiHandler):
                             "ok": False,
                             "error": f"slot HTTP {resp.status}",
                             "body": text[:500],
-                            "host": f"{host_only}:{cfg.port}",
+                            "host": f"{host_only}:{port}",
                             "duration_ms": duration_ms,
                         }
                     try:
@@ -153,7 +168,7 @@ class LmmTestPrompt(ApiHandler):
             return {
                 "ok": False,
                 "error": f"{type(exc).__name__}: {exc}",
-                "host": f"{host_only}:{cfg.port}",
+                "host": f"{host_only}:{port}",
             }
         except Exception as exc:
             return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
@@ -162,9 +177,9 @@ class LmmTestPrompt(ApiHandler):
         message = choice.get("message") or {}
         return {
             "ok": True,
-            "slot_id": next((k for k, v in manager.servers.items() if v is srv), slot_key),
+            "slot_id": slot_id,
             "slot_role": role_val,
-            "host": f"{host_only}:{cfg.port}",
+            "host": f"{host_only}:{port}",
             "model_alias": data.get("model"),
             "content": message.get("content") or "",
             "reasoning_content": message.get("reasoning_content"),

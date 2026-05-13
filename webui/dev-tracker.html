@@ -1,5 +1,14 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>a0_lmm_router — Dev Tracker</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body style="margin:0;padding:0">
 <!-- a0_lmm_router DEV TRACKER — development status radiator -->
-<div x-data="devTracker()" x-init="init()" style="font-family:'IBM Plex Mono','JetBrains Mono','Fira Code',monospace;background:#04080d;min-height:100%;padding:0;color:#a8b5c4;">
+<div x-data="devTracker()" x-init="init()" style="font-family:'IBM Plex Mono','JetBrains Mono','Fira Code',monospace;background:#04080d;min-height:100vh;padding:0;color:#a8b5c4;">
 
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&family=Outfit:wght@300;500;700;900&display=swap');
@@ -462,7 +471,7 @@
 
 </div>
 
-<script type="module">
+<script>
 /**
  * Dev Tracker Data — a0_lmm_router
  *
@@ -474,9 +483,9 @@ function devTracker() {
     plugin: {
       id: 'a0_lmm_router',
       name: 'LMM Router',
-      version: '1.1.0',
-      description: 'Unified LMM server management + smart routing. Merged from a0_lmm + a0_smart_router. Backend: llama.cpp slot control, health monitoring, remote/docker/subprocess backends, model recommendation & install. Frontend: real-time dashboard, compute monitoring, model finder, model test panel with reasoning_content support.',
-      lastUpdated: '2026-04-20',
+      version: '1.2.2',
+      description: 'Unified LMM server management + smart routing. v1.2.0: compose relocated. v1.2.1: failover chains, stats dashboard. v1.2.2: GUI-driven multi-model slot assignment, HF install form, VRAM-aware Load/Unload.',
+      lastUpdated: '2026-05-12',
     },
 
     phases: [
@@ -501,19 +510,43 @@ function devTracker() {
       { name: 'simpleeval Workaround', desc: 'A0 `agent0ai/agent-zero:latest` image ships without simpleeval even though it is in requirements.txt. helpers.files imports it at module scope, cascading into silent slots=[]. Plugin now resolves its own config path via Path(__file__) with zero A0-core dependency.', files: 'helpers/llama_cpp_manager.py, helpers/compute_monitor.py, api/llamacpp_status.py', status: 'done', priority: 'crit' },
       { name: 'Model Test Panel', desc: 'New webui page + API endpoint to send test prompts to any slot and inspect content / reasoning_content / timings side-by-side. Button in dashboard header. Enables quick model comparison without the full A0 agent loop.', files: 'api/lmm_test_prompt.py, webui/model-test.html, webui/dashboard.html', status: 'done', priority: 'high' },
       { name: 'Stale Reference Cleanup', desc: 'Replaced a0-v098 -> agent-zero-2 and localhost:50001 -> localhost:5080 in README and _SYSTEM_MAP.html to match current container layout.', files: 'README.md, _SYSTEM_MAP.html', status: 'done', priority: 'low' },
+      // --- 2026-05-11 session (v1.2.0) ---
+      { name: 'Compose Relocation to Plugin', desc: 'Moved docker-compose.lmm.yml + .env from agent-zero-2 root into usr/plugins/a0_lmm_router/docker/ for plugin independence. Updated all references in .bat files, Python tools, APIs, and documentation.', files: 'docker/docker-compose.lmm.yml, docker/docker-compose.lmm.env, start_agent_zero.bat, stop_agent_zero.bat, lmm_manager.bat, tools/lmm_host_helper.py (both copies), api/lmm_fleet_ignite.py, tools/fleet_ignite.py', status: 'done', priority: 'high' },
+      { name: '5 Optimization Flags Integration', desc: 'Added opt-in support for --no-mmap, --mlock, --n-cpu-moe, --cache-type-k, --cache-type-v in docker-compose.lmm.yml (via env vars), docker_backend.py (_build_container_cmd), and llama_cpp_servers.yaml (slot_defaults). All flags default off. Added commented-out vision (8084) and reasoning (8086) service stanzas.', files: 'docker/docker-compose.lmm.yml, docker/docker-compose.lmm.env, helpers/backends/docker_backend.py, conf/llama_cpp_servers.yaml', status: 'done', priority: 'high' },
+      { name: 'Tiny Router Pattern Research', desc: 'Explored usr/plugins/tiny_router/ source: failover.py (301 lines, ready to copy), stats.py (206 lines, ready to copy), preset_bridge.py (191 lines, needs adaptation), router.py (148 lines, 7-rule decision tree). Documented concrete adoption notes in _SYSTEM_MAP.html Appendix A.', files: '_SYSTEM_MAP.html (Appendix A)', status: 'done', priority: 'med' },
+      // --- 2026-05-11 session (v1.2.1) ---
+      { name: 'Failover Chain Implementation', desc: 'Created helpers/smart_router/failover.py with SlotFailoverState, get_chain_for_role(), cooldown probing, and SlotDecision dataclass. Integrated into BackendManager with _init_failover(), select_slot_with_failover(), and mark_slot_error().', files: 'helpers/smart_router/failover.py, helpers/llama_cpp_manager.py (+200 lines)', status: 'done', priority: 'high' },
+      { name: 'Stats Tracker + Dashboard', desc: 'Created helpers/stats_tracker.py with per-slot request tracking, savings estimation, failover event logging. Added api/lmm_stats_summary.py endpoint. Updated dashboard.html with new Stats card (Savings, Failover, Slot Usage) and hourly mini-chart.', files: 'helpers/stats_tracker.py, api/lmm_stats_summary.py, webui/dashboard.html, webui/js/dashboard-store.js', status: 'done', priority: 'high' },
+      { name: 'Cooldown Probes (ERROR recovery)', desc: 'Background task probes ERROR slots every 30s, auto-recovers to READY when health returns. Tracked via CooldownTracker class.', files: 'helpers/llama_cpp_manager.py (_cooldown_probe_loop)', status: 'done', priority: 'high' },
+      { name: 'Recommended Flags in Catalog', desc: 'Added recommended_flags field to model catalog entries. Large models get cache_type_k/q8_0, others get empty flags.', files: 'helpers/model_recommender.py (_CURATED, _fallback)', status: 'done', priority: 'medium' },
+      { name: 'Bat Scripts --env-file Fix', desc: 'Added --env-file flag to all docker compose commands in start_agent_zero.bat and lmm_manager.bat to ensure MODEL_PATH variables are loaded correctly from the relocated env file.', files: 'start_agent_zero.bat, lmm_manager.bat', status: 'done', priority: 'high' },
+      // --- 2026-05-12 session (v1.2.2 - Multi-model GUI) ---
+      { name: 'Host Helper Model Endpoints', desc: 'Added /models/list, /models/install, /models/assign, /models/delete, /models/verify, /models/jobs/{id}, /tokens/hf endpoints to lmm_host_helper.py with manifest management and env rewriting.', files: 'tools/lmm_host_helper.py (+~350 lines)', status: 'done', priority: 'crit' },
+      { name: 'Dashboard Model Selectors', desc: 'Added per-slot model dropdown with assign button, swap-in-progress spinner, VRAM-aware Load/Unload toggles.', files: 'webui/dashboard.html, webui/js/dashboard-store.js', status: 'done', priority: 'crit' },
+      { name: 'HF Install Form', desc: 'Added free-form HuggingFace install form with progress bar and job polling for downloading arbitrary GGUFs.', files: 'webui/dashboard.html, webui/js/dashboard-store.js', status: 'done', priority: 'high' },
+      { name: 'Installed Models Panel', desc: 'Added panel showing all models from installed_models.yaml with size, role hint, and source info.', files: 'webui/dashboard.html', status: 'done', priority: 'med' },
       { name: 'Auto-discovery of LMM slots', desc: 'Zero-config install. Three strategies: Docker socket, host-helper /compose-ls, DNS probing. Plugin should find slots automatically on any A0 container. Documented in ROADMAP P1.', files: 'tools/lmm_host_helper.py (+/compose-ls), helpers/llama_cpp_manager.py (+auto-discover)', status: 'todo', priority: 'high' },
       { name: 'Per-slot VRAM Attribution', desc: 'Blocked on Windows WDDM (nvidia-smi --query-compute-apps returns [N/A]). Pragmatic fallback: gguf file size * 1.15 as ~estimate. Documented in ROADMAP P2.', files: 'tools/lmm_host_helper.py (+/file-size), helpers/compute_monitor.py', status: 'todo', priority: 'med' },
+      // --- 2026-05-12 session (v1.14 update fix) ---
+      { name: 'Fix v1.14 Update Hang', desc: 'Removed asyncio.create_task() call from BackendManager.__init__ which was causing init_a0() to block during agent_init. Cooldown probes now start lazily in start_all() which always has a running event loop. This fixes intermittent update failures where first attempt hangs after "Preload completed." but second attempt succeeds.', files: 'helpers/llama_cpp_manager.py (_init_failover, start_all, _start_cooldown_probes)', status: 'done', priority: 'crit' },
     ],
 
     apis: [
       { path: '/llamacpp_control', handler: 'LlamacppControl', live: true },
       { path: '/llamacpp_status', handler: 'LlamacppStatus', live: true },
       { path: '/llamacpp_list_models', handler: 'LlamacppListModels', live: true },
+      { path: '/assign_model', handler: 'AssignModel', live: true },
+      { path: '/job_status', handler: 'JobStatus', live: true },
+      { path: '/cancel_job', handler: 'CancelJob', live: true },
+      { path: '/delete_model', handler: 'DeleteModel', live: true },
       { path: '/lmm_test_prompt', handler: 'LmmTestPrompt', live: true },
       { path: '/lmm_host_ignite', handler: 'LmmHostIgnite', live: true },
+      { path: '/lmm_stats_summary', handler: 'LmmStatsSummary', live: true },
       { path: '/lmm_compute_stats', handler: 'LmmComputeStats', live: true },
       { path: '/lmm_model_recommend', handler: 'LmmModelRecommend', live: true },
       { path: '/lmm_model_install', handler: 'LmmModelInstall', live: true },
+      { path: '/set_hf_token', handler: 'SetHfToken', live: true },
+      { path: '/clear_hf_token', handler: 'ClearHfToken', live: true },
       { path: '/lmm_inference', handler: 'LmmInference (planned)', live: false },
       { path: '/lmm_task_classify', handler: 'LmmTaskClassify (planned)', live: false },
     ],
@@ -576,10 +609,12 @@ function devTracker() {
 
     notes: `
       <strong>Merge Status:</strong> a0_lmm + a0_smart_router → a0_lmm_router — <strong style="color:var(--ok)">COMPLETE</strong><br>
-      <strong>Next Priority:</strong> Phase 10 (LMM Inference Client) — chat_completion + streaming + idle watchdog + fallback chain<br>
+      <strong>v1.2.2 Multi-Model GUI:</strong> Per-slot model dropdowns, HF install form, VRAM-aware Load/Unload — <strong style="color:var(--ok)">DONE</strong><br>
+      <strong>Next Priority:</strong> LMM Inference Client — chat_completion + streaming + idle watchdog<br>
       <strong>Blockers:</strong> None currently<br>
-      <strong>Lint Warnings:</strong> 580+ local IDE warnings — all from missing Docker-runtime packages (flask, aiohttp, psutil, yaml, etc). Harmless.<br>
-      <strong>Old Plugins:</strong> a0_lmm/ and a0_smart_router/ fully deleted. Zero dangling references confirmed via grep.
+      <strong>Lint Warnings:</strong> 600+ local IDE warnings — all from missing Docker-runtime packages (flask, aiohttp, psutil, yaml, huggingface_hub). Harmless.<br>
+      <strong>Architecture:</strong> One container per slot (restart-to-swap). Multiple GGUFs on host volume. No proxy/router needed — A0 talks to stable slot ports.<br>
+      <strong>HF Models Ready:</strong> User can now install supergemma4-26b + gemma-4-E4B via dashboard and assign to chat/utility slots.
     `,
 
     // ── computed ──
@@ -592,3 +627,7 @@ function devTracker() {
 }
 window.devTracker = devTracker;
 </script>
+
+</div>
+</body>
+</html>

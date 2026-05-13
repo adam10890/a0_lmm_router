@@ -9,7 +9,7 @@ Usage from the agent:
 
 Under the hood this calls the plugin's `lmm_host_ignite` API which in
 turn talks to the host helper (tools/lmm_host_helper.py). The helper
-runs `docker compose -f docker-compose.lmm.yml up -d` on the Windows
+runs `docker compose -f usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml up -d` on the Windows
 host — something the container itself cannot do.
 
 When the host helper isn't running the tool returns a clear message

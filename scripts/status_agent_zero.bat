@@ -19,14 +19,6 @@ if %ERRORLEVEL% EQU 0 (
     echo   [!!] PostgreSQL        : STOPPED
 )
 
-REM Local Model Manager
-curl -s http://localhost:8888/health >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
-    echo   [OK] Model Manager     : RUNNING  - http://localhost:8888
-) else (
-    echo   [!!] Model Manager     : STOPPED
-)
-
 REM LMM Docker Containers
 echo.
 echo   LMM Docker Containers (llama.cpp):
@@ -100,10 +92,7 @@ echo.
 
 REM GPU Status
 echo  GPU Status:
-curl -s http://localhost:8888/gpu 2>nul | findstr "name\|used_vram\|total_vram" 
-if %ERRORLEVEL% NEQ 0 (
-    echo   [!] Cannot retrieve GPU info - LMM not running
-)
+echo  ------------------------------------------------------------
 
 echo.
 echo  ------------------------------------------------------------

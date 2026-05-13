@@ -1,7 +1,7 @@
 <!-- a0_lmm_router dashboard — A0-native design (Catppuccin Mocha palette) -->
 <div x-data>
   <template x-if="true">
-    <div x-data="createDashboardStore()" x-init="init()" x-destroy="cleanup()"
+    <div x-data="createDashboardStore()" x-init="init()" x-destroy="cleanup()" x-key="Date.now()"
          style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--color-bg,#1e1e2e);color:var(--color-fg,#cdd6f4);min-height:100%;">
 
       <style>
@@ -94,6 +94,98 @@
         .rec-badge.installed { background:#a6e3a120; color:var(--ok); border:1px solid #a6e3a140; }
         .rec-badge.new       { background:#89b4fa20; color:var(--info); border:1px solid #89b4fa40; }
 
+        /* Hardware-aware picks (local-llm-recommender skill) */
+        .hw-hdr-row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:10px; padding:8px 12px;
+                      background:var(--surface2); border:1px solid var(--border); border-radius:8px; font-size:.72rem; }
+        .hw-hdr-row .hw-pill { background:var(--color-bg,#1e1e2e); border:1px solid var(--border); padding:2px 8px; border-radius:20px; color:var(--soft); }
+        .hw-hdr-row .hw-pill b { color:var(--color-fg,#cdd6f4); font-weight:600; }
+        .hw-hdr-row .hw-tier { background:#cba6f720; border:1px solid #cba6f760; color:var(--accent); font-weight:700; padding:2px 10px; border-radius:20px; }
+        .hw-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:10px; }
+        .hw-card { background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:12px 14px; position:relative; }
+        .hw-card.comfortable { border-left:3px solid var(--ok); }
+        .hw-card.balanced    { border-left:3px solid var(--info); }
+        .hw-card.stretch     { border-left:3px solid var(--warn); }
+        .hw-card.empty       { border-left:3px solid var(--border-soft); opacity:.7; }
+        .hw-card-label { font-size:.65rem; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); margin-bottom:6px; }
+        .hw-card.comfortable .hw-card-label { color:var(--ok); }
+        .hw-card.balanced    .hw-card-label { color:var(--info); }
+        .hw-card.stretch     .hw-card-label { color:var(--warn); }
+        .hw-card-name { font-size:.92rem; font-weight:700; color:var(--color-fg,#cdd6f4); margin-bottom:4px; }
+        .hw-card-meta { font-size:.7rem; color:var(--muted); margin-bottom:8px; font-family:'SF Mono','Menlo','Consolas',monospace; }
+        .hw-card-reason { font-size:.76rem; color:var(--soft); margin-bottom:10px; line-height:1.4; }
+        .hw-card-install { font-size:.7rem; background:var(--color-bg,#1e1e2e); border:1px solid var(--border); border-radius:6px;
+                           padding:6px 8px; font-family:'SF Mono','Menlo','Consolas',monospace; color:#cdd6f4; word-break:break-all;
+                           display:flex; justify-content:space-between; align-items:center; gap:6px; }
+        .hw-card-install code { flex:1; background:transparent; padding:0; border:0; font-size:.7rem; }
+        .hw-card-install button { font-size:.62rem; padding:3px 8px; }
+        .hw-card-warn { margin-top:8px; font-size:.7rem; padding:6px 8px; border-radius:6px;
+                        background:#f9e2af15; color:var(--warn); border:1px solid #f9e2af40; }
+        .hw-score { display:inline-block; font-size:.62rem; font-weight:700; padding:1px 7px; border-radius:20px;
+                    background:#cba6f720; color:var(--accent); border:1px solid #cba6f740; margin-left:6px; vertical-align:middle; }
+        .hw-speed { display:inline-block; font-size:.62rem; font-weight:700; padding:1px 7px; border-radius:20px; margin-left:4px; vertical-align:middle; }
+        .hw-speed.fast    { background:#a6e3a120; color:var(--ok);   border:1px solid #a6e3a140; }
+        .hw-speed.usable  { background:#89b4fa20; color:var(--info); border:1px solid #89b4fa40; }
+        .hw-speed.slow    { background:#f9e2af20; color:var(--warn); border:1px solid #f9e2af40; }
+        .hw-speed.painful { background:#f38ba820; color:var(--err);  border:1px solid #f38ba840; }
+        .hw-notes { margin-top:12px; padding:10px 12px; background:var(--surface2); border:1px solid var(--border); border-radius:8px;
+                    font-size:.72rem; color:var(--soft); line-height:1.5; }
+        .hw-notes ul { margin:4px 0 0 0; padding-left:18px; }
+        .hw-notes li { margin-bottom:2px; }
+        .hw-empty-card { text-align:center; padding:14px 12px; color:var(--muted); font-size:.76rem; line-height:1.5; }
+        .hw-snapshot { font-size:.62rem; color:var(--muted); font-style:italic; margin-left:auto; }
+        .hw-source { font-size:.62rem; padding:1px 7px; border-radius:20px; background:#11111b; border:1px solid var(--border); color:var(--muted); }
+
+        /* Per-slot suggestions (slot_recommender) */
+        .slot-item-wrap { margin-bottom:6px; }
+        .slot-suggested { background:var(--surface2); border:1px solid var(--border); border-top:0; border-radius:0 0 8px 8px;
+                          margin-top:-1px; padding:8px 12px 10px; }
+        .slot-suggested-hdr { display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:.7rem; }
+        .slot-suggested-title { color:var(--accent); font-weight:600; letter-spacing:.02em; }
+        .slot-fit-badge { font-size:.6rem; font-weight:700; padding:1px 7px; border-radius:20px; letter-spacing:.06em; }
+        .slot-fit-badge.fit-optimal    { background:#a6e3a120; color:var(--ok);   border:1px solid #a6e3a140; }
+        .slot-fit-badge.fit-fits       { background:#89b4fa20; color:var(--info); border:1px solid #89b4fa40; }
+        .slot-fit-badge.fit-undersized { background:#f9e2af20; color:var(--warn); border:1px solid #f9e2af40; }
+        .slot-fit-badge.fit-oversized  { background:#f38ba820; color:var(--err);  border:1px solid #f38ba840; }
+        .slot-fit-badge.fit-empty      { background:transparent; color:var(--muted); border:1px solid var(--border); }
+        .slot-suggested-row { display:flex; align-items:center; gap:10px; padding:5px 0; border-top:1px dashed var(--border); }
+        .slot-suggested-row:first-of-type { border-top:0; }
+        .ssr-info { display:flex; align-items:center; gap:6px; flex-wrap:wrap; flex:1; min-width:0; }
+        .ssr-name { font-size:.78rem; font-weight:600; color:var(--color-fg,#cdd6f4); }
+        .ssr-meta { font-size:.68rem; color:var(--muted); font-family:'SF Mono','Menlo','Consolas',monospace; }
+        .ssr-actions { flex-shrink:0; }
+        .ssr-download { display:flex; align-items:center; gap:4px; }
+        .ssr-cmd { font-size:.62rem; background:var(--color-bg,#1e1e2e); border:1px solid var(--border); border-radius:5px;
+                   padding:3px 6px; color:#cdd6f4; font-family:'SF Mono','Menlo','Consolas',monospace; max-width:280px;
+                   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .ssr-download .btn { padding:3px 6px; font-size:.62rem; }
+
+        /* Slot model selector */
+        .slot-model-row { display:flex; gap:8px; align-items:center; margin-top:6px; }
+        .slot-model-select {
+          background:var(--surface); border:1px solid var(--border); border-radius:6px;
+          color:var(--color-fg,#cdd6f4); font-size:.76rem; padding:4px 8px;
+          min-width:200px;
+        }
+        .slot-model-select:focus { outline:none; border-color:var(--info); }
+        .slot-assign-btn { font-size:.7rem; padding:3px 10px; }
+        .slot-swap-spinner {
+          display:inline-flex; align-items:center; gap:6px; font-size:.7rem; color:var(--info);
+        }
+        .spin { animation:spin 1s linear infinite; }
+        @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+
+        /* Install form */
+        .install-form { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+        .install-input {
+          background:var(--surface); border:1px solid var(--border); border-radius:6px;
+          color:var(--color-fg,#cdd6f4); font-size:.76rem; padding:6px 10px;
+          min-width:180px;
+        }
+        .install-input:focus { outline:none; border-color:var(--info); }
+        .install-progress { font-size:.72rem; color:var(--muted); }
+        .install-bar-wrap { width:100%; height:4px; background:var(--border); border-radius:2px; margin-top:4px; }
+        .install-bar-fill { height:100%; background:var(--ok); border-radius:2px; transition:width .3s; }
+
         /* Messages */
         .lmm-msg { font-size:.8rem; padding:10px 14px; border-radius:8px; margin-bottom:12px; line-height:1.45; }
         .lmm-msg.err   { background:#f38ba815; color:var(--err);  border:1px solid #f38ba840; }
@@ -142,6 +234,11 @@
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 2v4M18 2v4M6 18v4M18 18v4"/></svg>
               Compute
             </div>
+            <!-- Live tier chip: derived from live compute_monitor data on every poll -->
+            <template x-if="liveTier.tier">
+              <span class="hw-tier" :title="'EIM ' + liveTier.eim_gb + ' GB (' + liveTier.eim_basis + ')'"
+                    x-text="'Tier ' + liveTier.tier"></span>
+            </template>
             <div class="section-meta" x-text="hasGPU ? (gpus.length + ' GPU' + (gpus.length===1?'':'s')) : 'CPU only'"></div>
           </div>
           <div class="section-body">
@@ -256,19 +353,86 @@
             </template>
 
             <template x-for="s in slots" :key="s.id">
-              <div class="slot-item" :class="(s.running && !s.healthy) ? 'broken' : ''">
-                <div class="slot-dot" :class="s.running ? (s.healthy ? 'on' : 'warn') : 'off'"></div>
-                <div>
-                  <div class="slot-name" x-text="s.id"></div>
-                  <div class="slot-meta" x-text="s.role + (s.model_id ? ' · ' + s.model_id : '') + (s.port ? ' · :' + s.port : '')"></div>
+              <div class="slot-item-wrap">
+                <div class="slot-item" :class="(s.running && !s.healthy) ? 'broken' : ''">
+                  <div class="slot-dot" :class="s.running ? (s.healthy ? 'on' : 'warn') : 'off'"></div>
+                  <div style="min-width:0">
+                    <div class="slot-name" x-text="s.id"></div>
+                    <div class="slot-meta" x-text="s.role + (s.model_id ? ' · ' + s.model_id : '') + (s.port ? ' · :' + s.port : '')"></div>
+
+                    <!-- Model selector row -->
+                    <div class="slot-model-row" x-show="!swapInProgress[s.id]">
+                      <select class="slot-model-select"
+                              x-model="s.selectedModelId"
+                              @change="s.selectedModelId = $event.target.value">
+                        <option value="">-- Select model --</option>
+                        <template x-for="opt in getSlotModelOptions(s.role)" :key="opt.id">
+                          <option :value="opt.id" x-text="opt.label" :selected="opt.id === getSlotCurrentModelId(s)"></option>
+                        </template>
+                      </select>
+                      <button class="btn btn-primary slot-assign-btn"
+                              @click="const mid = s.selectedModelId || getSlotCurrentModelId(s); if (mid) assignModelToSlot(s.id, mid)"
+                              :disabled="!s.selectedModelId || s.selectedModelId === getSlotCurrentModelId(s)">
+                        Assign
+                      </button>
+                    </div>
+
+                    <!-- Swap in progress indicator -->
+                    <div class="slot-swap-spinner" x-show="swapInProgress[s.id]">
+                      <span class="spin">⟳</span>
+                      <span>Restarting container…</span>
+                    </div>
+                  </div>
+
+                  <span class="slot-status"
+                        :style="'color:' + (s.running ? (s.healthy ? 'var(--ok)' : 'var(--warn)') : 'var(--muted)')"
+                        x-text="s.running ? (s.healthy ? 'healthy' : 'unhealthy') : 'stopped'"></span>
+                  <div class="slot-btns">
+                    <button class="btn btn-confirm" x-show="!s.running" @click="controlSlot('start', s.id)" :disabled="swapInProgress[s.id]">Load</button>
+                    <button class="btn btn-cancel"  x-show="s.running"  @click="controlSlot('stop', s.id)" :disabled="swapInProgress[s.id]">Unload</button>
+                  </div>
                 </div>
-                <span class="slot-status"
-                      :style="'color:' + (s.running ? (s.healthy ? 'var(--ok)' : 'var(--warn)') : 'var(--muted)')"
-                      x-text="s.running ? (s.healthy ? 'healthy' : 'unhealthy') : 'stopped'"></span>
-                <div class="slot-btns">
-                  <button class="btn btn-confirm" x-show="!s.running" @click="controlSlot('start', s.id)">Start</button>
-                  <button class="btn btn-cancel"  x-show="s.running"  @click="controlSlot('stop', s.id)">Stop</button>
-                </div>
+
+                <!-- ⚡ Per-slot suggestions (role-aware, tier-aware) -->
+                <template x-if="slotSuggestions[s.id] && slotSuggestions[s.id].suggestions && slotSuggestions[s.id].suggestions.length">
+                  <div class="slot-suggested">
+                    <div class="slot-suggested-hdr">
+                      <span class="slot-suggested-title"
+                            x-text="'⚡ Better for ' + s.role + ' @ ' + (liveTier.tier || '?')"></span>
+                      <span class="slot-fit-badge" :class="'fit-' + (slotSuggestions[s.id].current_status || 'EMPTY').toLowerCase()"
+                            x-text="slotSuggestions[s.id].current_status"
+                            :title="slotSuggestions[s.id].current_status_reason"></span>
+                    </div>
+                    <template x-for="sug in slotSuggestions[s.id].suggestions" :key="sug.name">
+                      <div class="slot-suggested-row">
+                        <div class="ssr-info">
+                          <span class="ssr-name" x-text="sug.name"></span>
+                          <template x-if="sug.aa_score !== null && sug.aa_score !== undefined">
+                            <span class="hw-score" x-text="'AA ' + sug.aa_score"></span>
+                          </template>
+                          <span class="hw-speed" :class="(sug.speed_class || 'fast').toLowerCase()"
+                                x-text="sug.speed_class"></span>
+                          <span class="ssr-meta" x-text="sug.quant + ' · ~' + sug.size_gb + ' GB'"></span>
+                        </div>
+                        <div class="ssr-actions">
+                          <template x-if="sug.source === 'installed'">
+                            <button class="btn btn-confirm slot-assign-btn"
+                                    @click="assignModelToSlot(s.id, sug.model_id)"
+                                    :disabled="swapInProgress[s.id]"
+                                    x-text="'Assign ' + sug.model_id">
+                            </button>
+                          </template>
+                          <template x-if="sug.source === 'download'">
+                            <div class="ssr-download">
+                              <code class="ssr-cmd" x-text="sug.install"></code>
+                              <button class="btn btn-ghost slot-assign-btn" @click="copyInstall(sug.install)" title="Copy install command">📋</button>
+                            </div>
+                          </template>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </template>
               </div>
             </template>
 
@@ -280,12 +444,314 @@
           </div>
         </div>
 
-        <!-- ─── Recommendations section ──────────────────────── -->
+        <!-- ─── Advanced: General hardware picks (collapsible) ─── -->
+        <details class="section adv-picks">
+          <summary class="section-head" style="cursor:pointer;">
+            <div class="section-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+              Advanced — General Hardware Picks
+            </div>
+            <span class="section-meta">3-tier Comfortable / Balanced / Stretch view (full-host scan)</span>
+          </summary>
+          <div class="section-body">
+            <div style="font-size:.72rem; color:var(--muted); margin-bottom:10px;">
+              For role-agnostic "what fits my whole machine" recommendations.
+              Per-slot picks live above inside each slot card.
+            </div>
+            <button class="btn btn-accent" :disabled="hw.loading"
+                    @click="scanHardware()"
+                    x-text="hw.loading ? 'Scanning…' : (hw.tier ? 'Re-scan host' : 'Scan host')"></button>
+            <template x-if="hw.snapshot">
+              <span class="hw-snapshot" style="margin-left:10px" x-text="'snapshot ' + hw.snapshot"></span>
+            </template>
+            <template x-if="hw.source">
+              <span class="hw-source" style="margin-left:6px" x-text="hw.source === 'host_helper' ? 'host helper' : hw.source === 'local' ? 'local probe' : hw.source"></span>
+            </template>
+
+            <template x-if="hw.error">
+              <div class="lmm-msg err" style="margin-top:10px;">
+                <b>Hardware scan failed:</b> <span x-text="hw.error"></span>
+                <div style="margin-top:6px; font-size:.7rem; opacity:.85;">
+                  Needs the host helper running on the host (port 55501).
+                </div>
+              </div>
+            </template>
+
+            <template x-if="hw.tier && !hw.loading">
+              <div style="margin-top:12px;">
+                <div class="hw-hdr-row">
+                  <span class="hw-pill">OS: <b x-text="hw.os_name + ' ' + (hw.os_version || '')"></b></span>
+                  <span class="hw-pill">CPU: <b x-text="hw.cpu_name || '—'"></b></span>
+                  <span class="hw-pill" x-show="hw.gpu_label">GPU: <b x-text="hw.gpu_label"></b></span>
+                  <span class="hw-pill">RAM: <b x-text="hw.ram_gb + ' GB'"></b></span>
+                  <span class="hw-pill">Free disk: <b x-text="hw.disk_free_gb + ' GB'"></b></span>
+                  <span class="hw-pill">EIM: <b x-text="hw.eim_gb + ' GB (' + hw.eim_basis + ')'"></b></span>
+                  <span class="hw-tier" x-text="'Tier ' + hw.tier"></span>
+                </div>
+
+                <div class="hw-grid">
+                  <template x-if="hw.picks.comfortable">
+                    <div class="hw-card comfortable">
+                      <div class="hw-card-label">⚡ Comfortable</div>
+                      <div class="hw-card-name">
+                        <span x-text="hw.picks.comfortable.name"></span>
+                        <template x-if="hw.picks.comfortable.aa_score !== null && hw.picks.comfortable.aa_score !== undefined">
+                          <span class="hw-score" x-text="'AA ' + hw.picks.comfortable.aa_score"></span>
+                        </template>
+                        <span class="hw-speed" :class="hw.picks.comfortable.speed_class.toLowerCase()" x-text="hw.picks.comfortable.speed_class"></span>
+                      </div>
+                      <div class="hw-card-meta" x-text="hw.picks.comfortable.quant + ' · ~' + hw.picks.comfortable.size_gb + ' GB · ' + (hw.picks.comfortable.active_params_b ? hw.picks.comfortable.params_b + 'B-A' + hw.picks.comfortable.active_params_b + 'B MoE' : hw.picks.comfortable.params_b + 'B dense')"></div>
+                      <div class="hw-card-reason" x-text="hw.picks.comfortable.reason"></div>
+                      <div class="hw-card-install">
+                        <code x-text="hw.picks.comfortable.install"></code>
+                        <button class="btn btn-ghost" @click="copyInstall(hw.picks.comfortable.install)" title="Copy command">📋</button>
+                      </div>
+                    </div>
+                  </template>
+                  <template x-if="hw.picks.balanced">
+                    <div class="hw-card balanced">
+                      <div class="hw-card-label">★ Balanced</div>
+                      <div class="hw-card-name">
+                        <span x-text="hw.picks.balanced.name"></span>
+                        <template x-if="hw.picks.balanced.aa_score !== null && hw.picks.balanced.aa_score !== undefined">
+                          <span class="hw-score" x-text="'AA ' + hw.picks.balanced.aa_score"></span>
+                        </template>
+                        <span class="hw-speed" :class="hw.picks.balanced.speed_class.toLowerCase()" x-text="hw.picks.balanced.speed_class"></span>
+                      </div>
+                      <div class="hw-card-meta" x-text="hw.picks.balanced.quant + ' · ~' + hw.picks.balanced.size_gb + ' GB · ' + (hw.picks.balanced.active_params_b ? hw.picks.balanced.params_b + 'B-A' + hw.picks.balanced.active_params_b + 'B MoE' : hw.picks.balanced.params_b + 'B dense')"></div>
+                      <div class="hw-card-reason" x-text="hw.picks.balanced.reason"></div>
+                      <div class="hw-card-install">
+                        <code x-text="hw.picks.balanced.install"></code>
+                        <button class="btn btn-ghost" @click="copyInstall(hw.picks.balanced.install)" title="Copy command">📋</button>
+                      </div>
+                    </div>
+                  </template>
+                  <template x-if="hw.picks.stretch">
+                    <div class="hw-card stretch">
+                      <div class="hw-card-label">↑ Stretch</div>
+                      <div class="hw-card-name">
+                        <span x-text="hw.picks.stretch.name"></span>
+                        <template x-if="hw.picks.stretch.aa_score !== null && hw.picks.stretch.aa_score !== undefined">
+                          <span class="hw-score" x-text="'AA ' + hw.picks.stretch.aa_score"></span>
+                        </template>
+                        <span class="hw-speed" :class="hw.picks.stretch.speed_class.toLowerCase()" x-text="hw.picks.stretch.speed_class"></span>
+                      </div>
+                      <div class="hw-card-meta" x-text="hw.picks.stretch.quant + ' · ~' + hw.picks.stretch.size_gb + ' GB · ' + (hw.picks.stretch.active_params_b ? hw.picks.stretch.params_b + 'B-A' + hw.picks.stretch.active_params_b + 'B MoE' : hw.picks.stretch.params_b + 'B dense')"></div>
+                      <div class="hw-card-reason" x-text="hw.picks.stretch.reason"></div>
+                      <div class="hw-card-install">
+                        <code x-text="hw.picks.stretch.install"></code>
+                        <button class="btn btn-ghost" @click="copyInstall(hw.picks.stretch.install)" title="Copy command">📋</button>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+
+                <template x-if="hw.notes && hw.notes.length">
+                  <div class="hw-notes">
+                    <b>Notes:</b>
+                    <ul>
+                      <template x-for="(n, i) in hw.notes" :key="i">
+                        <li x-text="n"></li>
+                      </template>
+                    </ul>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </details>
+
+        <!-- ─── Stats section ────────────────────────────────── -->
         <div class="section">
           <div class="section-head">
             <div class="section-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+              Usage Stats
+            </div>
+            <div class="btn-row" style="margin-left:auto">
+              <button class="btn btn-ghost" :class="statsWindow==='24h'?'btn-primary':''" @click="setStatsWindow('24h')">24h</button>
+              <button class="btn btn-ghost" :class="statsWindow==='7d'?'btn-primary':''" @click="setStatsWindow('7d')">7d</button>
+              <button class="btn btn-ghost" :class="statsWindow==='30d'?'btn-primary':''" @click="setStatsWindow('30d')">30d</button>
+            </div>
+          </div>
+          <div class="section-body">
+            <div class="compute-grid">
+              <!-- Savings card -->
+              <div class="compute-card">
+                <div class="compute-card-hdr">
+                  <span class="compute-card-title">Savings</span>
+                  <span class="compute-badge badge-ok" x-text="'$' + stats.total_savings_window.toFixed(2) + ' saved'"></span>
+                </div>
+                <div class="stat-row">
+                  <span class="stat-key">Total Requests</span>
+                  <span class="stat-val" x-text="stats.total_requests_window.toLocaleString()"></span>
+                </div>
+                <div class="stat-row">
+                  <span class="stat-key">All-Time Savings</span>
+                  <span class="stat-val" x-text="'$' + stats.total_savings_usd.toFixed(2)"></span>
+                </div>
+                <div class="stat-row" style="margin-top:4px">
+                  <span class="stat-key">Tokens</span>
+                  <span class="stat-val" x-text="(stats.total_tokens_input + stats.total_tokens_output).toLocaleString() + ' total'"></span>
+                </div>
+              </div>
+
+              <!-- Failover card -->
+              <div class="compute-card">
+                <div class="compute-card-hdr">
+                  <span class="compute-card-title">Failover</span>
+                  <span class="compute-badge" :class="stats.failovers.total > 0 ? 'badge-warn' : 'badge-ok'" x-text="stats.failovers.total + ' events'"></span>
+                </div>
+                <template x-if="stats.failovers.total > 0">
+                  <div>
+                    <div class="stat-row">
+                      <span class="stat-key">Last Event</span>
+                      <span class="stat-val" x-text="stats.failovers.last_at ? new Date(stats.failovers.last_at).toLocaleString() : '—'"></span>
+                    </div>
+                    <div class="stat-row" style="margin-top:4px">
+                      <span class="stat-key">By Reason</span>
+                    </div>
+                    <template x-for="(count, reason) in stats.failovers.by_reason" :key="reason">
+                      <div style="font-size:.72rem;color:var(--muted);padding-left:8px">
+                        <span x-text="reason + ': ' + count"></span>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+                <template x-if="stats.failovers.total === 0">
+                  <div style="font-size:.78rem;color:var(--muted)">No failover events recorded</div>
+                </template>
+              </div>
+
+              <!-- Slot usage card -->
+              <div class="compute-card">
+                <div class="compute-card-hdr">
+                  <span class="compute-card-title">Slot Usage</span>
+                  <span class="compute-badge badge-info" x-text="stats.slots.length + ' tracked'"></span>
+                </div>
+                <template x-for="slot in stats.slots.slice(0, 3)" :key="slot.slot_id">
+                  <div style="margin-bottom:6px">
+                    <div class="stat-row">
+                      <span class="stat-key" x-text="slot.slot_id"></span>
+                      <span class="stat-val" x-text="slot.requests.toLocaleString() + ' req'"></span>
+                    </div>
+                    <div style="font-size:.68rem;color:var(--muted)">
+                      <span x-text="'avg ' + Math.round(slot.avg_latency_ms) + 'ms'"></span>
+                      <span x-show="slot.last_used"> · last <span x-text="timeAgoShort(slot.last_used)"></span></span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <!-- Hourly distribution mini-chart -->
+            <div style="margin-top:14px">
+              <div style="font-size:.72rem;color:var(--muted);margin-bottom:6px">Hourly Request Distribution (Last 24h)</div>
+              <div style="display:flex;align-items:flex-end;height:40px;gap:2px">
+                <template x-for="(count, hour) in stats.hourly_distribution" :key="hour">
+                  <div style="flex:1;background:var(--info);border-radius:2px 2px 0 0;opacity:0.8"
+                       :style="'height:' + Math.max((count / Math.max(...stats.hourly_distribution)) * 100, 5) + '%;background:' + (count > 0 ? 'var(--info)' : 'var(--border-soft)')">
+                  </div>
+                </template>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:.6rem;color:var(--muted);margin-top:2px">
+                <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>23:00</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ─── Installed Models section ─────────────────────── -->
+        <div class="section">
+          <div class="section-head">
+            <div class="section-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+              Installed Models
+            </div>
+            <div class="section-meta" x-text="Object.keys(installedModels).length + ' models'"></div>
+            <button class="btn btn-ghost" style="margin-left:auto" @click="_fetchInstalledModels()">Refresh</button>
+          </div>
+          <div class="section-body">
+            <template x-if="Object.keys(installedModels).length === 0 && !loading">
+              <div>
+                <div class="empty-state">No models installed yet.</div>
+                <template x-if="installedDiag">
+                  <div class="lmm-msg warn" style="margin-top:8px;">
+                    <b>Diagnostic:</b>
+                    <ul style="margin:6px 0 0 18px; padding:0; font-size:.72rem;">
+                      <li>Host helper reachable: <b x-text="installedDiag.host_reachable ? 'yes' : 'NO — start lmm_host_helper.py on the host'"></b></li>
+                      <template x-if="installedDiag.scanned_dir">
+                        <li>Scanned dir on host: <code x-text="installedDiag.scanned_dir"></code></li>
+                      </template>
+                      <li x-text="installedDiag.message"></li>
+                    </ul>
+                  </div>
+                </template>
+              </div>
+            </template>
+
+            <template x-for="[id, m] in Object.entries(installedModels).slice(0, 10)" :key="id">
+              <div class="rec-item">
+                <div>
+                  <div class="rec-name" x-text="id"></div>
+                  <div class="rec-detail" x-text="(m.size_gb || '?') + ' GB · ' + (m.role_hint || 'utility') + (m.repo_id && m.repo_id !== 'local' ? ' · ' + m.repo_id : '')"></div>
+                </div>
+                <span class="rec-badge installed">INSTALLED</span>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- ─── Install from HuggingFace section ─────────────── -->
+        <div class="section">
+          <div class="section-head">
+            <div class="section-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20"/></svg>
+              Install Model
+            </div>
+            <span style="font-size:.7rem;color:var(--muted);margin-left:8px">Download GGUF from HuggingFace</span>
+          </div>
+          <div class="section-body">
+            <div class="install-form">
+              <input type="text" class="install-input" x-model="installForm.repo" placeholder="Repo ID (e.g. unsloth/Llama-3.2-3B-Instruct)" style="flex:1;min-width:260px">
+              <input type="text" class="install-input" x-model="installForm.file" placeholder="Filename (e.g. Llama-3.2-3B-Instruct-Q4_K_M.gguf)" style="flex:1;min-width:260px">
+              <select class="install-input" x-model="installForm.role" style="width:auto">
+                <option value="">Role (auto)</option>
+                <option value="chat">chat</option>
+                <option value="utility">utility</option>
+                <option value="embedding">embedding</option>
+                <option value="vision">vision</option>
+              </select>
+              <button class="btn btn-accent" @click="installFromForm()" :disabled="!installForm.repo || !installForm.file || installForm.installing">
+                <span x-show="!installForm.installing">Download</span>
+                <span x-show="installForm.installing">Downloading…</span>
+              </button>
+            </div>
+
+            <!-- Progress bar for form install -->
+            <template x-if="installForm.installing && installForm.progress !== null">
+              <div style="margin-top:8px">
+                <div class="install-bar-wrap">
+                  <div class="install-bar-fill" :style="'width:' + installForm.progress + '%'"></div>
+                </div>
+                <div class="install-progress" x-text="installForm.progress.toFixed(1) + '% — ' + installForm.status"></div>
+              </div>
+            </template>
+            <div x-show="installForm.error" class="lmm-msg err" style="margin-top:8px" x-text="installForm.error"></div>
+            <div x-show="installForm.success" class="lmm-msg ok" style="margin-top:8px" x-text="installForm.success"></div>
+          </div>
+        </div>
+
+        <!-- (Hardware-Aware Picks moved to collapsible <details> at the bottom; live tier now
+             shown as a chip in the Compute section header. Per-slot recommendations live
+             inside each slot card in the LLAMA.CPP SLOTS section.) -->
+
+        <!-- ─── Recommendations section ──────────────────────── -->
+        <div class="section" x-show="recommendations.length > 0">
+          <div class="section-head">
+            <div class="section-title">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-              Model Recommendations
+              Legacy Recommendations
             </div>
             <button class="btn btn-ghost" style="margin-left:auto" @click="_fetchRecommendations()">Refresh</button>
           </div>
@@ -305,9 +771,9 @@
                       x-text="rec.already_installed ? 'INSTALLED' : 'NEW'"></span>
                 <template x-if="!rec.already_installed">
                   <button class="btn btn-accent"
-                          :disabled="installStatus[rec.filename] === 'downloading'"
+                          :disabled="installStatus[rec.filename] && installStatus[rec.filename].status === 'downloading'"
                           @click="installModel(rec)"
-                          x-text="installStatus[rec.filename] === 'downloading' ? 'Downloading…' : installStatus[rec.filename] === 'done' ? 'Done' : installStatus[rec.filename] === 'error' ? 'Failed' : 'Install'">
+                          x-text="installStatus[rec.filename] && installStatus[rec.filename].status === 'downloading' ? 'Downloading… ' + (installStatus[rec.filename].percent || 0).toFixed(0) + '%' : installStatus[rec.filename] && installStatus[rec.filename].status === 'done' ? 'Done' : installStatus[rec.filename] && installStatus[rec.filename].status === 'error' ? 'Failed' : 'Install'">
                   </button>
                 </template>
               </div>

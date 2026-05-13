@@ -5,9 +5,7 @@ Reads installed_models.yaml + compute_resources.yaml to understand current
 capacity, then queries HuggingFace for compatible models.
 """
 
-import os
 import logging
-import subprocess
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, asdict
 
@@ -76,6 +74,7 @@ _CURATED: List[Dict[str, Any]] = [
         "filename": "Mistral-Small-3.1-24B-Instruct-2503-Q4_K_M.gguf",
         "size_gb": 14.2, "vram_required_gb": 17.0, "quant": "Q4_K_M",
         "role": "chat", "reason": "Excellent multilingual chat, strong reasoning",
+        "recommended_flags": {"cache_type_k": "q8_0", "cache_type_v": "q8_0"},
     },
     {
         "name": "DeepSeek-Coder-V2-Lite (Q4_K_M)",
@@ -83,6 +82,7 @@ _CURATED: List[Dict[str, Any]] = [
         "filename": "DeepSeek-Coder-V2-Lite-Instruct-Q4_K_M.gguf",
         "size_gb": 9.65, "vram_required_gb": 11.6, "quant": "Q4_K_M",
         "role": "code", "reason": "Top code completion/review model in its class",
+        "recommended_flags": {"cache_type_k": "q8_0"},
     },
     {
         "name": "Qwen2.5-7B-Instruct (Q4_K_M)",
@@ -90,6 +90,7 @@ _CURATED: List[Dict[str, Any]] = [
         "filename": "qwen2.5-7b-instruct-q4_k_m.gguf",
         "size_gb": 4.7, "vram_required_gb": 5.6, "quant": "Q4_K_M",
         "role": "utility", "reason": "Versatile utility model, good instruction following",
+        "recommended_flags": {},
     },
     {
         "name": "Phi-3.5-mini (Q4_K_M)",
@@ -97,6 +98,7 @@ _CURATED: List[Dict[str, Any]] = [
         "filename": "Phi-3.5-mini-instruct-Q4_K_M.gguf",
         "size_gb": 2.23, "vram_required_gb": 2.7, "quant": "Q4_K_M",
         "role": "router", "reason": "Lightweight router/classifier, 128K context",
+        "recommended_flags": {},
     },
     {
         "name": "Nomic-Embed-Text-v1.5 (Q4_K_M)",
@@ -104,6 +106,7 @@ _CURATED: List[Dict[str, Any]] = [
         "filename": "nomic-embed-text-v1.5.Q4_K_M.gguf",
         "size_gb": 0.08, "vram_required_gb": 0.1, "quant": "Q4_K_M",
         "role": "embedding", "reason": "High quality embeddings, tiny footprint",
+        "recommended_flags": {},
     },
     {
         "name": "Gemma-3-4B-Instruct (Q4_K_M)",
@@ -111,6 +114,7 @@ _CURATED: List[Dict[str, Any]] = [
         "filename": "gemma-3-4b-it-Q4_K_M.gguf",
         "size_gb": 2.5, "vram_required_gb": 3.0, "quant": "Q4_K_M",
         "role": "utility", "reason": "Very capable for its size, good for lightweight tasks",
+        "recommended_flags": {},
     },
 ]
 
@@ -120,77 +124,53 @@ _CURATED: List[Dict[str, Any]] = [
 # ---------------------------------------------------------------------------
 
 def get_recommendations(
-    installed_yaml: str,
-    compute_yaml: str,
+    installed_yaml: str = "",
+    compute_yaml: str = "",
     role_filter: Optional[str] = None,
     max_results: int = 10,
 ) -> List[Dict[str, Any]]:
     """
-    Return a list of model recommendations based on hardware + gaps.
+    Return model recommendations, delegated to llmfit_advisor if available.
 
-    Parameters
-    ----------
-    installed_yaml : path to installed_models.yaml
-    compute_yaml   : path to compute_resources.yaml
-    role_filter    : optional – only recommend for this role
-    max_results    : cap on returned items
+    Falls back to a minimal curated list when the advisor plugin is absent.
     """
-    installed = _load_yaml(installed_yaml)
-    compute = _load_yaml(compute_yaml)
-    vram_gb = _get_available_vram_gb(compute)
-    existing_roles = _get_installed_roles(installed)
+    try:
+        from usr.plugins.llmfit_advisor.helpers.llmfit import recommend as llmfit_recommend
+        use_case = role_filter or "general"
+        result = llmfit_recommend(use_case=use_case, limit=max_results, enrich_fleet=True)
+        if "models" in result:
+            return result["models"]
+        if "error" not in result:
+            return [result]
+        return _fallback(role_filter, max_results)
+    except ImportError:
+        return _fallback(role_filter, max_results)
 
-    results: List[Dict[str, Any]] = []
-    for c in _CURATED:
-        if role_filter and c["role"] != role_filter:
-            continue
-        # Fits in VRAM?
-        if c["vram_required_gb"] > vram_gb:
-            continue
-        # Already installed?
-        already = c["role"] in existing_roles
-        results.append({
-            **c,
-            "already_installed": already,
-            "fits_vram": True,
-        })
-    # Sort: uninstalled first, then by size ascending
-    results.sort(key=lambda x: (x["already_installed"], x["size_gb"]))
+
+def _fallback(role_filter: Optional[str], max_results: int) -> List[Dict[str, Any]]:
+    """Minimal fallback when llmfit_advisor is not available."""
+    fallback_models = [
+        {"name": "Qwen3.5-9B (Q4_K_M)", "repo_id": "Qwen/Qwen3.5-9B-Instruct-GGUF", "filename": "qwen3.5-9b-instruct-q4_k_m.gguf", "size_gb": 5.7, "vram_required_gb": 6.8, "quant": "Q4_K_M", "role": "chat", "reason": "Strong general-purpose model, good reasoning", "recommended_flags": {"cache_type_k": "q8_0", "cache_type_v": "q8_0"}},
+        {"name": "Nomic-Embed-Text-v1.5 (Q4_K_M)", "repo_id": "nomic-ai/nomic-embed-text-v1.5-GGUF", "filename": "nomic-embed-text-v1.5.Q4_K_M.gguf", "size_gb": 0.08, "vram_required_gb": 0.1, "quant": "Q4_K_M", "role": "embedding", "reason": "High quality embeddings, tiny footprint", "recommended_flags": {}},
+        {"name": "Phi-3.5-mini (Q4_K_M)", "repo_id": "bartowski/Phi-3.5-mini-instruct-GGUF", "filename": "Phi-3.5-mini-instruct-Q4_K_M.gguf", "size_gb": 2.23, "vram_required_gb": 2.7, "quant": "Q4_K_M", "role": "utility", "reason": "Lightweight, 128K context", "recommended_flags": {}},
+    ]
+    results = [m for m in fallback_models if not role_filter or m["role"] == role_filter]
+    for m in results:
+        m["source"] = "fallback"
+        m["note"] = "llmfit_advisor plugin not available"
     return results[:max_results]
 
 
 def install_model(
     repo_id: str,
     filename: str,
-    target_dir: str,
+    target_dir: str = "",
 ) -> Dict[str, Any]:
-    """
-    Download a GGUF file from HuggingFace using huggingface-cli.
-
-    Returns dict with ok, message, path.
-    """
-    os.makedirs(target_dir, exist_ok=True)
-    target_path = os.path.join(target_dir, filename)
-
-    if os.path.exists(target_path):
-        return {"ok": True, "message": "Already exists", "path": target_path}
-
     try:
-        cmd = [
-            "huggingface-cli", "download",
-            repo_id, filename,
-            "--local-dir", target_dir,
-            "--local-dir-use-symlinks", "False",
-        ]
-        logger.info("Downloading model: %s", " ".join(cmd))
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        if result.returncode == 0:
-            return {"ok": True, "message": "Download complete", "path": target_path}
-        else:
-            return {"ok": False, "message": f"Download failed: {result.stderr.strip()}", "path": ""}
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "message": "Download timed out (10 min)", "path": ""}
-    except FileNotFoundError:
-        return {"ok": False, "message": "huggingface-cli not found. Install with: pip install huggingface-hub", "path": ""}
-    except Exception as exc:
-        return {"ok": False, "message": str(exc), "path": ""}
+        from usr.plugins.a0_lmm_router.helpers.fleet_models import install_model as fleet_install
+        return fleet_install(repo_id=repo_id, filename=filename)
+    except ImportError:
+        return {
+            "ok": False,
+            "error": "fleet_models module not available",
+        }

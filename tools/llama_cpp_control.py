@@ -9,7 +9,7 @@ Allows the agent to manage local llama.cpp servers:
 
 from helpers.tool import Tool, Response
 from helpers import files
-import asyncio
+import os
 
 
 class LlamaCppControl(Tool):
@@ -22,14 +22,16 @@ class LlamaCppControl(Tool):
         server_name = kwargs.get("server")
         
         try:
-            from usr.plugins.a0_lmm_router.helpers.llama_cpp_manager import LlamaCppManager
+            from usr.plugins.a0_lmm_router.helpers.llama_cpp_manager import BackendManager
             
-            # Prefer plugin conf, fall back to root conf
             plugin_conf = files.get_abs_path("usr/plugins/a0_lmm_router/conf/llama_cpp_servers.yaml")
             root_conf = files.get_abs_path("conf/llama_cpp_servers.yaml")
-            import os as _os
-            config_path = plugin_conf if _os.path.exists(plugin_conf) else root_conf
-            manager = LlamaCppManager.get_instance(config_path)
+            env_conf = os.environ.get("A0_LMM_ROUTER_CONFIG", "")
+            config_path = env_conf if env_conf and os.path.exists(env_conf) else (
+                root_conf if os.path.exists(root_conf) else plugin_conf
+            )
+            BackendManager._instance = None  # noqa: SLF001
+            manager = BackendManager.get_instance(config_path)
             
         except ImportError:
             return Response(
@@ -70,7 +72,7 @@ class LlamaCppControl(Tool):
     
     async def _get_status(self, manager) -> Response:
         """Get status of all servers."""
-        status = manager.get_status()
+        status = getattr(manager, "_slot_configs", {})
         
         if not status:
             return Response(
@@ -81,28 +83,12 @@ class LlamaCppControl(Tool):
         lines = ["## llama.cpp Server Status\n"]
         
         for name, info in status.items():
-            status_emoji = {
-                'running': '≡ƒƒó',
-                'stopped': 'ΓÜ½',
-                'starting': '≡ƒƒí',
-                'stopping': '≡ƒƒí',
-                'error': '≡ƒö┤',
-            }.get(info['status'], 'ΓÜ¬')
-            
-            lines.append(f"### {name} {status_emoji}")
-            lines.append(f"- **Status:** {info['status']}")
-            lines.append(f"- **Role:** {info['role']}")
-            lines.append(f"- **Port:** {info['port']}")
-            lines.append(f"- **Model:** {info['model']}")
-            
-            if info['status'] == 'running':
-                uptime_mins = int(info['uptime'] / 60)
-                lines.append(f"- **Uptime:** {uptime_mins} minutes")
-                lines.append(f"- **PID:** {info['pid']}")
-            
-            if info['error']:
-                lines.append(f"- **Error:** {info['error']}")
-            
+            lines.append(f"### {name}")
+            lines.append(f"- **Backend:** {manager.backend_type}")
+            lines.append(f"- **Role:** {info.get('role', 'chat')}")
+            lines.append(f"- **Port:** {info.get('port', '')}")
+            lines.append(f"- **Model ID:** {info.get('model_id', 'unknown')}")
+            lines.append("- **Lifecycle:** external LMM container/service")
             lines.append("")
         
         return Response(
@@ -118,25 +104,27 @@ class LlamaCppControl(Tool):
                 break_loop=False
             )
         
-        if name not in manager.servers:
-            available = ", ".join(manager.servers.keys())
+        slots = getattr(manager, "_slot_configs", {})
+        if name not in slots:
+            available = ", ".join(slots.keys())
             return Response(
                 message=f"Server '{name}' not found. Available: {available}",
                 break_loop=False
             )
         
-        success = await manager.start_server(name)
+        result = await manager.start_slot(name)
+        success = bool(result.get("healthy") or result.get("running")) and not result.get("error")
         
         if success:
-            port = manager.servers[name].config.port
+            port = result.get("port", slots[name].get("port", ""))
             return Response(
-                message=f"Γ£à Server '{name}' started successfully on port {port}",
+                message=f"Remote slot '{name}' is reachable on port {port}",
                 break_loop=False
             )
         else:
-            error = manager.servers[name].error_message or "Unknown error"
+            error = result.get("error") or "Unknown error"
             return Response(
-                message=f"Γ¥î Failed to start '{name}': {error}",
+                message=f"Remote slot '{name}' is not reachable: {error}",
                 break_loop=False
             )
     
@@ -148,22 +136,22 @@ class LlamaCppControl(Tool):
                 break_loop=False
             )
         
-        if name not in manager.servers:
+        if name not in getattr(manager, "_slot_configs", {}):
             return Response(
                 message=f"Server '{name}' not found",
                 break_loop=False
             )
         
-        success = await manager.stop_server(name)
+        success = await manager.stop_slot(name)
         
         if success:
             return Response(
-                message=f"Γ£à Server '{name}' stopped",
+                message=f"Unregistered remote slot '{name}'; external container was not stopped",
                 break_loop=False
             )
         else:
             return Response(
-                message=f"Γ¥î Failed to stop '{name}'",
+                message=f"Slot '{name}' was not registered",
                 break_loop=False
             )
     
@@ -171,14 +159,17 @@ class LlamaCppControl(Tool):
         """Start all enabled servers."""
         results = await manager.start_all()
         
-        started = [n for n, s in results.items() if s]
-        failed = [n for n, s in results.items() if not s]
+        started = [
+            n for n, s in results.items()
+            if bool(s.get("healthy") or s.get("running")) and not s.get("error")
+        ]
+        failed = [n for n, s in results.items() if s.get("error")]
         
         lines = []
         if started:
-            lines.append(f"Γ£à Started: {', '.join(started)}")
+            lines.append(f"Reachable: {', '.join(started)}")
         if failed:
-            lines.append(f"Γ¥î Failed: {', '.join(failed)}")
+            lines.append(f"Not reachable: {', '.join(failed)}")
         
         if not lines:
             lines.append("No servers to start")
@@ -190,29 +181,24 @@ class LlamaCppControl(Tool):
     
     async def _stop_all(self, manager) -> Response:
         """Stop all running servers."""
-        results = await manager.stop_all()
-        
-        stopped = [n for n, s in results.items() if s]
-        failed = [n for n, s in results.items() if not s]
-        
-        lines = []
-        if stopped:
-            lines.append(f"Γ£à Stopped: {', '.join(stopped)}")
-        if failed:
-            lines.append(f"Γ¥î Failed to stop: {', '.join(failed)}")
+        slots = list(getattr(manager, "_slot_configs", {}).keys())
+        await manager.stop_all()
         
         return Response(
-            message="\n".join(lines) or "No servers were running",
+            message=(
+                f"Cleared remote slot tracking for: {', '.join(slots)}. "
+                "External containers were not stopped."
+            ) if slots else "No servers were configured",
             break_loop=False
         )
     
     def _get_endpoints(self, manager) -> Response:
         """Get API endpoints for running servers."""
         endpoints = {
-            'chat': manager.get_chat_endpoint(),
-            'utility': manager.get_utility_endpoint(),
-            'embedding': manager.get_embedding_endpoint(),
-            'router': manager.get_router_endpoint(),
+            'chat': manager.get_endpoint('chat'),
+            'utility': manager.get_endpoint('utility'),
+            'embedding': manager.get_endpoint('embedding'),
+            'router': manager.get_endpoint('router'),
         }
         
         lines = ["## llama.cpp API Endpoints\n"]
