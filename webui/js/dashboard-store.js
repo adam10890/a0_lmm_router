@@ -621,6 +621,41 @@ function createDashboardStore() {
       if (s < 86400) return Math.round(s / 3600) + 'h';
       return Math.round(s / 86400) + 'd';
     },
+
+    // ── Context slider helpers ────────────────────────────────
+    /**
+     * Estimate KV cache VRAM in GB for a given context size.
+     * Formula matches context_calculator.py: ctx × 2 × n_layer × n_embd × bytes_per_token
+     */
+    estimateKVCacheGB(modelId, ctxSize) {
+      const m = this.installedModels[modelId];
+      if (!m || !m.n_layer || !m.n_embd) {
+        // Rough fallback: ~0.5 GB per 8K context per 10GB model
+        const sizeGB = m ? m.size_gb : 5;
+        return (ctxSize / 8192) * (sizeGB / 10) * 0.5;
+      }
+      const bytesPerToken = 2; // FP16 KV cache
+      const totalBytes = ctxSize * 2 * m.n_layer * m.n_embd * bytesPerToken;
+      return totalBytes / (1024 ** 3);
+    },
+
+    /**
+     * Color indicator for context VRAM impact.
+     * green = comfortable, yellow = tight, red = won't fit
+     */
+    ctxVramColor(modelId, ctxSize) {
+      const gpu = this.gpus[0];
+      if (!gpu) return 'var(--muted)';
+      const m = this.installedModels[modelId];
+      const weightsGB = m ? m.size_gb * 1.15 : 5;
+      const kvGB = this.estimateKVCacheGB(modelId, ctxSize);
+      const totalNeeded = weightsGB + kvGB;
+      const totalAvail = gpu.total_vram_mb / 1024;
+      const pct = (totalNeeded / totalAvail) * 100;
+      if (pct > 95) return 'var(--err)';   // won't fit
+      if (pct > 80) return 'var(--warn)';  // tight
+      return 'var(--ok)';                   // comfortable
+    },
   };
 }
 
