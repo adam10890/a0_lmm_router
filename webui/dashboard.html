@@ -196,6 +196,29 @@
                         font-family:'SF Mono','Menlo','Consolas',monospace; font-size:.72rem; }
 
         .empty-state { text-align:center; padding:20px; color:var(--muted); font-size:.85rem; }
+
+        /* VRAM Budget Visualizer */
+        .vram-stacked-wrap { margin-bottom:12px; }
+        .vram-stacked-label { font-size:.72rem; color:var(--muted); margin-bottom:6px; font-weight:600; }
+        .vram-stacked-bar { display:flex; height:28px; border-radius:6px; overflow:hidden; border:1px solid var(--border);
+                            background:var(--color-bg,#1e1e2e); }
+        .vram-seg { display:flex; align-items:center; justify-content:center; min-width:2px;
+                    transition:width .5s ease; position:relative; cursor:default; }
+        .vram-seg-text { font-size:.62rem; font-weight:700; color:#11111b; white-space:nowrap; padding:0 4px;
+                         text-shadow:0 0 2px rgba(255,255,255,.3); }
+        .vram-seg-free { background:var(--surface2) !important; }
+        .vram-seg-free .vram-seg-text { color:var(--muted); text-shadow:none; }
+        .vram-warn-badge { margin-top:6px; font-size:.7rem; padding:4px 10px; border-radius:6px;
+                           background:#f38ba815; color:var(--err); border:1px solid #f38ba840; font-weight:600; }
+        .vram-breakdown { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:4px; margin-top:8px; }
+        .vram-row { display:flex; align-items:center; gap:8px; font-size:.74rem; padding:3px 6px;
+                    border-radius:4px; transition:background .15s; }
+        .vram-row:hover { background:var(--surface2); }
+        .vram-row-dot { width:8px; height:8px; border-radius:2px; flex-shrink:0; }
+        .vram-row-label { flex:1; color:var(--soft); }
+        .vram-row-val { color:var(--color-fg,#cdd6f4); font-weight:600; font-family:'SF Mono','Menlo','Consolas',monospace; font-size:.7rem; }
+        .vram-row-pct { color:var(--muted); font-size:.66rem; min-width:30px; text-align:right; }
+        .vram-row-free { opacity:.7; }
       </style>
 
       <div class="lmm-dash">
@@ -306,6 +329,62 @@
             </div>
           </div>
         </div>
+
+        <!-- ─── VRAM Budget Visualizer ────────────────────────── -->
+        <template x-if="hasGPU">
+          <div class="section">
+            <div class="section-head">
+              <div class="section-title">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><path d="M1 10h22"/><path d="M12 4v16"/></svg>
+                VRAM Budget
+              </div>
+              <div class="section-meta" x-text="vramBudget.freeGB + ' GB free'"></div>
+            </div>
+            <div class="section-body">
+              <!-- Stacked bar -->
+              <div class="vram-stacked-wrap">
+                <div class="vram-stacked-label" x-text="gpus[0]?.name + ' — ' + fmtMB(gpus[0]?.total_vram_mb)"></div>
+                <div class="vram-stacked-bar">
+                  <template x-for="seg in vramBudget.segments" :key="seg.label">
+                    <div class="vram-seg"
+                         :style="'width:' + seg.pct + '%;background:' + seg.color"
+                         :title="seg.label + ': ' + seg.gb.toFixed(1) + ' GB'"
+                         x-show="seg.pct > 0.5">
+                      <span class="vram-seg-text" x-show="seg.pct > 8" x-text="seg.short"></span>
+                    </div>
+                  </template>
+                  <div class="vram-seg vram-seg-free"
+                       :style="'width:' + vramBudget.freePct + '%'"
+                       :title="'Free: ' + vramBudget.freeGB + ' GB'">
+                    <span class="vram-seg-text" x-show="vramBudget.freePct > 8"
+                          x-text="vramBudget.freeGB + ' GB free'"></span>
+                  </div>
+                </div>
+                <!-- Warning badge -->
+                <template x-if="vramBudget.usedPct > 90">
+                  <div class="vram-warn-badge">⚠ VRAM usage above 90% — risk of OOM</div>
+                </template>
+              </div>
+              <!-- Breakdown table -->
+              <div class="vram-breakdown">
+                <template x-for="seg in vramBudget.segments" :key="seg.label">
+                  <div class="vram-row">
+                    <span class="vram-row-dot" :style="'background:' + seg.color"></span>
+                    <span class="vram-row-label" x-text="seg.label"></span>
+                    <span class="vram-row-val" x-text="seg.gb.toFixed(1) + ' GB'"></span>
+                    <span class="vram-row-pct" x-text="seg.pct.toFixed(0) + '%'"></span>
+                  </div>
+                </template>
+                <div class="vram-row vram-row-free">
+                  <span class="vram-row-dot" style="background:var(--border-soft)"></span>
+                  <span class="vram-row-label">Free</span>
+                  <span class="vram-row-val" x-text="vramBudget.freeGB + ' GB'"></span>
+                  <span class="vram-row-pct" x-text="vramBudget.freePct.toFixed(0) + '%'"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
 
         <!-- ─── Slots section ────────────────────────────────── -->
         <div class="section">
