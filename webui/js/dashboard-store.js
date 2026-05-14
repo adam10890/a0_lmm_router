@@ -5,12 +5,12 @@
  * exposes reactive data for GPU, CPU, slots, and model recommendations.
  */
 
-const POLL_INTERVAL_MS = 5000;
+var POLL_INTERVAL_MS = 5000;
 // A0 dispatches all plugin APIs under /api/plugins/<plugin_name>/<handler>.
 // (See /a0/helpers/api.py register_api_route.)
-const API_BASE = '/api/plugins/a0_lmm_router';
+var API_BASE = '/api/plugins/a0_lmm_router';
 
-const ENDPOINTS = {
+var ENDPOINTS = {
   computeStats: `${API_BASE}/lmm_compute_stats`,
   statsSummary: `${API_BASE}/lmm_stats_summary`,
   recommend:    `${API_BASE}/lmm_model_recommend`,
@@ -701,6 +701,7 @@ function createDashboardStore() {
       } finally {
         setTimeout(() => { this.swapInProgress[slotId] = false; }, 3000);
       }
+    },
 
 
     // ── Context slider helpers ────────────────────────────────
