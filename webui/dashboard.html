@@ -174,6 +174,17 @@
         .spin { animation:spin 1s linear infinite; }
         @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
 
+        /* Unified Load Panel */
+        .slot-load-panel { margin-top:6px; }
+        .slot-load-row { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+        .slot-ctx-input {
+          background:var(--surface); border:1px solid var(--border); border-radius:6px;
+          color:var(--color-fg,#cdd6f4); font-size:.72rem; padding:4px 6px; width:100px;
+          font-family:'SF Mono','Menlo','Consolas',monospace;
+        }
+        .slot-ctx-input:focus { outline:none; border-color:var(--accent); }
+        .slot-ctx-input::placeholder { color:var(--muted); font-family:inherit; }
+
         /* Install form */
         .install-form { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
         .install-input {
@@ -360,27 +371,35 @@
                     <div class="slot-name" x-text="s.id"></div>
                     <div class="slot-meta" x-text="s.role + (s.model_id ? ' · ' + s.model_id : '') + (s.port ? ' · :' + s.port : '')"></div>
 
-                    <!-- Model selector row -->
-                    <div class="slot-model-row" x-show="!swapInProgress[s.id]">
-                      <select class="slot-model-select"
-                              x-model="s.selectedModelId"
-                              @change="s.selectedModelId = $event.target.value">
-                        <option value="">-- Select model --</option>
-                        <template x-for="opt in getSlotModelOptions(s.role)" :key="opt.id">
-                          <option :value="opt.id" x-text="opt.label" :selected="opt.id === getSlotCurrentModelId(s)"></option>
-                        </template>
-                      </select>
-                      <button class="btn btn-primary slot-assign-btn"
-                              @click="const mid = s.selectedModelId || getSlotCurrentModelId(s); if (mid) assignModelToSlot(s.id, mid)"
-                              :disabled="!s.selectedModelId || s.selectedModelId === getSlotCurrentModelId(s)">
-                        Assign
-                      </button>
+                    <!-- Unified Load Panel (inspired by lmstudio-js client.llm.load()) -->
+                    <div class="slot-load-panel" x-show="!swapInProgress[s.id]">
+                      <div class="slot-load-row">
+                        <select class="slot-model-select"
+                                x-model="s.selectedModelId"
+                                @change="s.selectedModelId = $event.target.value">
+                          <option value="">-- Select model --</option>
+                          <template x-for="opt in getSlotModelOptions(s.role)" :key="opt.id">
+                            <option :value="opt.id" x-text="opt.label" :selected="opt.id === getSlotCurrentModelId(s)"></option>
+                          </template>
+                        </select>
+                        <input type="number" class="slot-ctx-input"
+                               :placeholder="'ctx: auto'"
+                               x-model.number="s._ctxOverride"
+                               min="2048" step="2048"
+                               title="Context window override (leave empty for auto-calculation)"/>
+                        <button class="btn btn-primary slot-assign-btn"
+                                @click="const mid = s.selectedModelId || getSlotCurrentModelId(s); if (mid) assignModelToSlot(s.id, mid)"
+                                :disabled="!s.selectedModelId || s.selectedModelId === getSlotCurrentModelId(s)"
+                                title="Load model into this slot with auto-calculated context">
+                          ⚡ Load
+                        </button>
+                      </div>
                     </div>
 
                     <!-- Swap in progress indicator -->
                     <div class="slot-swap-spinner" x-show="swapInProgress[s.id]">
                       <span class="spin">⟳</span>
-                      <span>Restarting container…</span>
+                      <span>Loading model + calculating context…</span>
                     </div>
                   </div>
 
@@ -388,7 +407,7 @@
                         :style="'color:' + (s.running ? (s.healthy ? 'var(--ok)' : 'var(--warn)') : 'var(--muted)')"
                         x-text="s.running ? (s.healthy ? 'healthy' : 'unhealthy') : 'stopped'"></span>
                   <div class="slot-btns">
-                    <button class="btn btn-confirm" x-show="!s.running" @click="controlSlot('start', s.id)" :disabled="swapInProgress[s.id]">Load</button>
+                    <button class="btn btn-confirm" x-show="!s.running" @click="controlSlot('start', s.id)" :disabled="swapInProgress[s.id]">Start</button>
                     <button class="btn btn-cancel"  x-show="s.running"  @click="controlSlot('stop', s.id)" :disabled="swapInProgress[s.id]">Unload</button>
                   </div>
                 </div>
