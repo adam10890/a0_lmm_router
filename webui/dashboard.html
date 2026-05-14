@@ -196,6 +196,27 @@
                         font-family:'SF Mono','Menlo','Consolas',monospace; font-size:.72rem; }
 
         .empty-state { text-align:center; padding:20px; color:var(--muted); font-size:.85rem; }
+
+        /* Model Library Cards */
+        .model-cards-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:10px; }
+        .model-card { background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:12px 14px;
+                      transition:border-color .2s, box-shadow .2s; }
+        .model-card:hover { border-color:var(--border-soft); box-shadow:0 2px 12px rgba(0,0,0,.3); }
+        .model-card-assigned { border-left:3px solid var(--accent); }
+        .model-card-hdr { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+        .model-card-name { font-size:.82rem; font-weight:700; color:var(--color-fg,#cdd6f4); overflow:hidden;
+                           text-overflow:ellipsis; white-space:nowrap; flex:1; }
+        .model-card-slot-badge { font-size:.6rem; font-weight:700; padding:2px 8px; border-radius:20px;
+                                  border:1px solid; white-space:nowrap; }
+        .model-card-meta { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
+        .model-card-tag, .model-card-size, .model-card-quant {
+          font-size:.62rem; font-weight:600; padding:1px 7px; border-radius:20px;
+          background:var(--color-bg,#1e1e2e); border:1px solid var(--border); color:var(--soft);
+        }
+        .model-card-ctx, .model-card-arch { display:flex; justify-content:space-between; font-size:.74rem; padding:2px 0; }
+        .model-card-path { font-size:.62rem; color:var(--muted); margin-top:6px; overflow:hidden;
+                           text-overflow:ellipsis; white-space:nowrap;
+                           font-family:'SF Mono','Menlo','Consolas',monospace; }
       </style>
 
       <div class="lmm-dash">
@@ -440,6 +461,56 @@
               <button class="btn btn-confirm" @click="controlSlot('start_all')">Start All</button>
               <button class="btn btn-cancel"  @click="controlSlot('stop_all')">Stop All</button>
               <button class="btn btn-ghost"   @click="refresh()">Refresh</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ─── Model Library ──────────────────────────────────── -->
+        <div class="section">
+          <div class="section-head">
+            <div class="section-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7h-8l-2-2H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z"/></svg>
+              Model Library
+            </div>
+            <div class="section-meta" x-text="Object.keys(installedModels).length + ' models'"></div>
+          </div>
+          <div class="section-body">
+            <template x-if="Object.keys(installedModels).length === 0">
+              <div class="empty-state">No models installed yet. Use the HuggingFace download form below to install models.</div>
+            </template>
+            <div class="model-cards-grid">
+              <template x-for="[mid, m] in Object.entries(installedModels)" :key="mid">
+                <div class="model-card" :class="m.assigned_slot ? 'model-card-assigned' : ''">
+                  <div class="model-card-hdr">
+                    <span class="model-card-name" x-text="mid.split('/').pop()"></span>
+                    <template x-if="m.assigned_slot">
+                      <span class="model-card-slot-badge"
+                            :style="'background:' + (_slotColors[m.assigned_slot] || '#6c7086') + '30; color:' + (_slotColors[m.assigned_slot] || '#6c7086') + '; border-color:' + (_slotColors[m.assigned_slot] || '#6c7086') + '60'"
+                            x-text="'⬤ ' + m.assigned_slot"></span>
+                    </template>
+                  </div>
+                  <div class="model-card-meta">
+                    <span class="model-card-tag" x-text="m.role || 'general'"></span>
+                    <span class="model-card-size" x-text="(m.size_gb || '?') + ' GB'"></span>
+                    <template x-if="m.quant">
+                      <span class="model-card-quant" x-text="m.quant"></span>
+                    </template>
+                  </div>
+                  <template x-if="m.n_ctx_train">
+                    <div class="model-card-ctx">
+                      <span class="stat-key">Max context</span>
+                      <span class="stat-val" x-text="(m.n_ctx_train / 1024).toFixed(0) + 'K'"></span>
+                    </div>
+                  </template>
+                  <template x-if="m.n_layer && m.n_embd">
+                    <div class="model-card-arch">
+                      <span class="stat-key">Architecture</span>
+                      <span class="stat-val" x-text="m.n_layer + 'L × ' + m.n_embd + 'D'"></span>
+                    </div>
+                  </template>
+                  <div class="model-card-path" :title="m.path || mid" x-text="(m.path || mid).split('/').slice(-2).join('/')"></div>
+                </div>
+              </template>
             </div>
           </div>
         </div>
