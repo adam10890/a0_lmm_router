@@ -17,6 +17,7 @@ const ENDPOINTS = {
   install:      `${API_BASE}/lmm_model_install`,
   listModels:   `${API_BASE}/llamacpp_list_models`,
   assignModel:  `${API_BASE}/assign_model`,
+  loadModel:    `${API_BASE}/load_model`,
   jobStatus:    `${API_BASE}/job_status`,
   control:      `${API_BASE}/llamacpp_control`,
   status:       `${API_BASE}/llamacpp_status`,
@@ -620,6 +621,85 @@ function createDashboardStore() {
       if (s < 3600) return Math.round(s / 60) + 'm';
       if (s < 86400) return Math.round(s / 3600) + 'h';
       return Math.round(s / 86400) + 'd';
+    },
+    // ── VRAM Budget Visualizer (computed) ─────────────────────
+    // Slot-to-color mapping for the stacked bar
+    _slotColors: {
+      chat:      '#cba6f7', // accent purple
+      utility:   '#89b4fa', // info blue
+      embed:     '#94e2d5', // teal
+      vision:    '#f9e2af', // warn yellow
+      reasoning: '#f38ba8', // err pink
+      _other:    '#6c7086', // muted
+    },
+
+    get vramBudget() {
+      const gpu = this.gpus[0];
+      if (!gpu) return { segments: [], freeGB: '0.0', freePct: 100, usedPct: 0 };
+
+      const totalGB = gpu.total_vram_mb / 1024;
+      const usedGB = gpu.used_vram_mb / 1024;
+      const freeGB = gpu.free_vram_mb / 1024;
+
+      // Build segments from running slots
+      const segments = [];
+      const runningSlots = this.slots.filter(s => s.running);
+
+      for (const s of runningSlots) {
+        const mid = this.getSlotCurrentModelId(s);
+        const model = mid ? this.installedModels[mid] : null;
+        // Estimate: model file size * 1.15 for runtime overhead
+        const estGB = model ? model.size_gb * 1.15 : 3.0;
+        const role = s.role || s.id || 'unknown';
+        const color = this._slotColors[role] || this._slotColors._other;
+
+        segments.push({
+          label: role.charAt(0).toUpperCase() + role.slice(1) + (model ? ' (' + (mid || '').split('/').pop() + ')' : ''),
+          short: role.charAt(0).toUpperCase() + role.slice(1),
+          gb: estGB,
+          pct: Math.min((estGB / totalGB) * 100, 100),
+          color,
+        });
+      }
+
+      // Calculate totals
+      const segTotal = segments.reduce((a, s) => a + s.gb, 0);
+      const segPct = segments.reduce((a, s) => a + s.pct, 0);
+      const freePct = Math.max(100 - segPct, 0);
+
+      return {
+        segments,
+        freeGB: freeGB.toFixed(1),
+        freePct: Math.max(freePct, 0),
+        usedPct: Math.min(segPct, 100),
+        totalGB: totalGB.toFixed(1),
+      };
+    },
+
+    // ── Load model (combined flow) ────────────────────────────
+    async loadModelToSlot(slotId, modelId, ctxSize) {
+      this.swapInProgress[slotId] = true;
+      try {
+        const body = { slot: slotId, model_id: modelId };
+        if (ctxSize) body.ctx_size = parseInt(ctxSize);
+        const r = await fetch(ENDPOINTS.loadModel, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(body),
+        });
+        const d = await r.json();
+        if (d.ok) {
+          setTimeout(() => this._fetchStats(), 3000);
+          return { ok: true, context: d.context };
+        } else {
+          return { ok: false, error: d.error || 'Load failed' };
+        }
+      } catch (e) {
+        return { ok: false, error: e.message || 'Connection failed' };
+      } finally {
+        setTimeout(() => { this.swapInProgress[slotId] = false; }, 3000);
+      }
     },
   };
 }
