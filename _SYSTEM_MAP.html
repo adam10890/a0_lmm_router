@@ -331,7 +331,7 @@
     <span class="chip good">Backend: Python (יושב בתוך A0 container)</span>
     <span class="chip good">Frontend: Alpine.js (WebUI של A0)</span>
     <span class="chip warn">llama.cpp: Docker containers על ה-host</span>
-    <span class="chip">גרסה: 1.0.0</span>
+    <span class="chip">גרסה: 1.2.2</span>
   </div>
   <div class="legend" style="margin-top:14px;">
     <span><span class="dot host"></span> Host (Windows)</span>
@@ -354,6 +354,10 @@
     מנהל <b>שרתי llama.cpp</b> (כל שרת = "slot" ב-port משלו) — מדליק, מכבה, מנטר.
     ב-Agent Zero הוא מופיע כ-<b>provider</b> אחד או יותר שאפשר לבחור בהם כ-<code>chat_model</code> / <code>utility_model</code>.
     בנוסף יש <b>Smart Router</b> שמזהה הודעות משתמש לפי patterns ובוחר workflow/slot מתאימים.
+    <b>חדש ב-v1.2.2:</b> בחירת מודל לכל slot דרך GUI — התקנה מ-HuggingFace, הקצאה, ו-Load/Unload עם מעקב VRAM.
+    <br><b>⚡ חדש (Phase-A):</b> <code>Hardware-Aware Picks</code> ב-dashboard — מזהה CPU/GPU/VRAM/RAM/disk
+    דרך host helper, מחשב Effective Inference Memory, ומציע 3 מודלים פתוחים
+    (Comfortable / Balanced / Stretch) לפי AA Intelligence Index (snapshot 11-05-2026).
   </p>
 </div>
 
@@ -399,6 +403,9 @@
       <b>Host helper (tools/lmm_host_helper.py)</b>
       <div class="meta">localhost:55501 (token auth)</div>
       HTTP bridge: מאפשר ל-A0 container לשלוט ב-docker על ה-host בלי לחשוף את ה-docker socket.
+      <br><b>Endpoints:</b> <code>/ignite</code>, <code>/extinguish</code>, <code>/status</code>,
+      <code>/gpu-stats</code>, <code>/models/*</code>, <code>/tokens/hf</code>,
+      <b>חדש:</b> <code>/hardware-scan</code> (CPU/GPU/VRAM/RAM/disk חוצה-OS עבור tier mapping).
     </div>
 
     <div class="item">
@@ -452,6 +459,34 @@
       <div class="meta">helpers/model_recommender.py</div>
       catalog של GGUFs + התאמה לחומרה. מפעיל <code>huggingface-cli download</code> להורדות.
     </div>
+
+    <div class="item">
+      <b>Hardware inspector ⚡</b>
+      <div class="meta">helpers/hardware_inspector.py</div>
+      מימוש skill <b>local-llm-recommender</b> (snapshot 11-05-2026):
+      <br><b>Primary path</b> — <code>derive_tier_from_stats(snap)</code> רץ על
+      ה-snapshot החי של <code>compute_monitor</code> ב-O(1) (אין scan כפול).
+      <br><b>Secondary path</b> — <code>scan_hardware()</code> + <code>/hardware-scan</code>
+      ל-OS name / disk free / fallback מקומי (collapsible Advanced view בלבד).
+    </div>
+
+    <div class="item">
+      <b>Tier catalog ⚡</b>
+      <div class="meta">helpers/tier_catalog.py</div>
+      קטלוג מודלים פתוחים לפי tier (Qwen3.6, gpt-oss, Gemma 4, Mistral, Nemotron, Qwen3.5)
+      עם ציוני <b>AA Intelligence Index</b>. כל pick מתויג ב-<code>roles</code>
+      (chat / utility / reasoning / code / embedding / vision).
+      קטלוגי משנה: <code>EMBEDDINGS</code> (Nomic, BGE-M3, BGE-Large)
+      ו-<code>VISION</code> (Qwen2.5-VL, Gemma 3 27B).
+    </div>
+
+    <div class="item">
+      <b>Slot recommender ⚡ חדש</b>
+      <div class="meta">helpers/slot_recommender.py</div>
+      Role-aware: לכל slot מחזיר <code>current_status</code>
+      (OPTIMAL / FITS / UNDERSIZED / OVERSIZED / EMPTY) ורשימת suggestions
+      ממוינות "Assign installed first, then download". שילוב של tier + role + installed manifest.
+    </div>
   </div>
 
   <div class="layer">
@@ -461,6 +496,8 @@
       <b>dashboard.html</b>
       <div class="meta">webui/dashboard.html</div>
       מוקד הבקרה: סטטוס חי של כל ה-slots, GPU/CPU/RAM, כפתורי start/stop. polling כל 5ש'.
+      <br><b>חדש:</b> section "Hardware-Aware Picks" עם כפתור <code>Scan &amp; Recommend</code>
+      שמחזיר 3 כרטיסים (Comfortable / Balanced / Stretch) לפי tier מחומרה.
     </div>
 
     <div class="item">
@@ -473,6 +510,12 @@
       <b>dev-tracker.html</b>
       <div class="meta">webui/dev-tracker.html</div>
       מקטע לבדיקת מצב פיתוח (פאזות, באגים, APIs). פחות רלוונטי לייצור.
+    </div>
+
+    <div class="item">
+      <b>model-test.html</b>
+      <div class="meta">webui/model-test.html</div>
+      פאנל לבדיקת מודלים: שליחת prompt לכל slot, תצוגת reasoning_content/timings.
     </div>
 
     <div class="item">
@@ -603,8 +646,8 @@
     </tr>
     <tr>
       <td>docker-compose של llama.cpp</td>
-      <td><code>C:\Users\frant\A0-0.9.7 working\docker-compose.lmm.yml</code></td>
-      <td>מוגדר</td>
+      <td><code>usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml</code></td>
+      <td>בתוך הפלאגין</td>
       <td>עריכת YAML של compose</td>
     </tr>
   </tbody>
@@ -649,6 +692,26 @@
   </div>
   <div class="card">
     <span class="tag">API</span>
+    <h4>lmm_hardware_recommend</h4>
+    <div class="path">api/lmm_hardware_recommend.py</div>
+    <div class="desc">
+      General Hardware Picks (3-tier Comfortable / Balanced / Stretch).
+      קריאה ל-host helper /hardware-scan עם OS / disk / fallback מקומי.
+      <br>משמש רק את ה-collapsible "Advanced" view ב-dashboard.
+    </div>
+  </div>
+  <div class="card">
+    <span class="tag">API</span>
+    <h4>lmm_slot_recommendations ⚡ חדש (primary)</h4>
+    <div class="path">api/lmm_slot_recommendations.py</div>
+    <div class="desc">
+      <b>Unified entry point</b>: ממזג compute_monitor + tier_catalog + slot_recommender + fleet_models
+      לקריאה אחת. מחזיר tier חי, picks per-slot, ו-<code>installed_diagnostics</code>
+      כשרשימת המודלים ריקה. מופעל אוטומטית ב-refresh של ה-dashboard.
+    </div>
+  </div>
+  <div class="card">
+    <span class="tag">API</span>
     <h4>lmm_model_install</h4>
     <div class="path">api/lmm_model_install.py</div>
     <div class="desc">הורדה מ-HuggingFace דרך <code>huggingface-cli</code>.</div>
@@ -664,6 +727,12 @@
     <h4>lmm_host_ignite</h4>
     <div class="path">api/lmm_host_ignite.py</div>
     <div class="desc">פקודות host-level (הרצת ה-BAT, Extinguish).</div>
+  </div>
+  <div class="card">
+    <span class="tag">API</span>
+    <h4>lmm_test_prompt</h4>
+    <div class="path">api/lmm_test_prompt.py</div>
+    <div class="desc">שליחת prompt בדיקה לכל slot + תצוגת reasoning_content/timings.</div>
   </div>
 </div>
 
@@ -745,7 +814,7 @@ a0_lmm_router/
 │   ├── llama_cpp_servers.yaml           ⚡ התצורה הראשית — slots + global + hardware
 │   └── model_providers.yaml             Providers שמוזרקים ל-A0 (llamacpp_local_chat/utility/embedding)
 │
-├── api/                                 8 HTTP endpoints
+├── api/                                 9 HTTP endpoints
 │   ├── llamacpp_control.py              POST: start/stop/restart slot
 │   ├── llamacpp_status.py               GET-like: per-slot status
 │   ├── llamacpp_list_models.py          רשימת GGUFs ב-models_dir
@@ -753,7 +822,8 @@ a0_lmm_router/
 │   ├── lmm_model_recommend.py           המלצות לפי hardware
 │   ├── lmm_model_install.py             HuggingFace download
 │   ├── lmm_fleet_ignite.py              Ignite all (דרך host helper)
-│   └── lmm_host_ignite.py               Host-level ops
+│   ├── lmm_host_ignite.py               Host-level ops
+│   └── lmm_test_prompt.py               Test prompt + reasoning_content/timings
 │
 ├── extensions/
 │   ├── python/
@@ -788,6 +858,7 @@ a0_lmm_router/
 │   ├── dashboard.html                   ⚡ ה-dashboard הראשי (17KB)
 │   ├── config.html                      Settings UI (13KB)
 │   ├── dev-tracker.html                 Dev radiator (27KB)
+│   ├── model-test.html                  פאנל בדיקת מודלים (14KB)
 │   └── js/
 │       └── dashboard-store.js           Alpine store
 │
@@ -854,9 +925,64 @@ a0_lmm_router/
 </table>
 
 <!-- =========================================================
-     SECTION 11 — Known issues
+     SECTION 11 — Recent updates (v1.2.0)
      ========================================================= -->
-<h2>11. בעיות ידועות</h2>
+<h2>11. עדכונים אחרונים — v1.2.0</h2>
+
+<div class="callout info">
+  <h4>✅ Compose Relocation + 5 Optimization Flags</h4>
+  <p>
+    <code>docker-compose.lmm.yml</code> + <code>.env</code> הועברו לתוך הפלאגין
+    (<code>usr/plugins/a0_lmm_router/docker/</code>) לעצמאות מלאה.
+    נוספו 5 דגלי אופטימיזציה (opt-in via env vars):
+    <code>--no-mmap</code>, <code>--mlock</code>, <code>--n-cpu-moe</code>,
+    <code>--cache-type-k</code>, <code>--cache-type-v</code>.
+    נוספו commented-out stanzas ל-vision (8084) ו-reasoning (8086).
+    <code>docker_backend.py</code> חווט לתמיכה בכל הדגלים (preparatory).
+  </p>
+</div>
+
+<div class="callout info">
+  <h4>v1.1.0 — עדכונים קודמים</h4>
+
+<div class="callout info">
+  <h4>✅ GPU Visibility Fix</h4>
+  <p>
+    ה-dashboard הציג "No GPU detected" כי nvidia-smi לא קיים בתוך ה-container של A0.
+    נוסף endpoint <code>/gpu-stats</code> ל-host helper; compute_monitor נופל ל-HTTP כאשר nvidia-smi מקומי נכשל.
+    נבדק end-to-end: RTX 4090, 23.7/24 GB VRAM גלוי מתוך A0.
+  </p>
+</div>
+
+<div class="callout info">
+  <h4>✅ simpleeval Workaround</h4>
+  <p>
+    תמונת A0 <code>agent0ai/agent-zero:latest</code> לא כוללת simpleeval למרות שהוא ב-requirements.txt.
+    helpers.files מייבא אותו ב-scope של מודול, מה שגרם ל-slots=[] שקט.
+    הפלאגין כעת מפענח את נתיב ה-config שלו דרך Path(__file__) ללא תלות ב-core של A0.
+  </p>
+</div>
+
+<div class="callout info">
+  <h4>✅ Model Test Panel</h4>
+  <p>
+    דף webui חדש + API endpoint לשליחת prompt בדיקה לכל slot ובדיקת content / reasoning_content / timings.
+    כפתור ב-header של ה-dashboard. מאפשר השוואת מודלים מהירה ללא הלולאה המלאה של A0.
+  </p>
+</div>
+
+<div class="callout info">
+  <h4>✅ Stale Reference Cleanup</h4>
+  <p>
+    הוחלפו הפניות ישנות: a0-v098 → agent-zero-2 ו-localhost:50001 → localhost:5080 ב-README ו-_SYSTEM_MAP.html
+    כדי להתאים למבנה הנוכחי של ה-container.
+  </p>
+</div>
+
+<!-- =========================================================
+     SECTION 12 — Known issues
+     ========================================================= -->
+<h2>12. בעיות ידועות</h2>
 
 <div class="callout danger">
   <h4>🔴 Retry loop עם מודלים חלשים (פעיל כרגע)</h4>
@@ -881,9 +1007,9 @@ a0_lmm_router/
 </div>
 
 <!-- =========================================================
-     SECTION 12 — Action items for the vision
+     SECTION 13 — Action items for the vision
      ========================================================= -->
-<h2>12. Action items — הצעות להשלמת החזון</h2>
+<h2>13. Action items — הצעות להשלמת החזון</h2>
 
 <div class="grid">
   <div class="card">
@@ -893,11 +1019,10 @@ a0_lmm_router/
   </div>
 
   <div class="card">
-    <span class="tag" style="background:#1f3a24;color:#7ee2a0;">קל</span>
+    <span class="tag" style="background:#0d2817;color:#7ee2a0;">✅ בוצע</span>
     <h4>2. העתק docker-compose.lmm.yml לפלאגין</h4>
     <div class="desc">
-      <code>usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml</code> + עדכון של launcher.py לפקד עליו.
-      ההעברה הזו הופכת את הפלאגין לעצמאי.
+      <code>usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml</code> — הועבר. הפלאגין עצמאי.
     </div>
   </div>
 
@@ -936,12 +1061,30 @@ a0_lmm_router/
       ינסה להעלות אותו דרך <code>subprocess.Popen</code> מהצד של A0 container (דרוש mount של docker socket).
     </div>
   </div>
+
+  <div class="card">
+    <span class="tag" style="background:#2a2113;color:#fbc765;">בינוני</span>
+    <h4>7. Auto-discovery של LMM slots</h4>
+    <div class="desc">
+      Zero-config install. שלוש אסטרטגיות: Docker socket, host-helper /compose-ls, DNS probing.
+      הפלאגין צריך למצוא slots אוטומטית בכל container של A0.
+    </div>
+  </div>
+
+  <div class="card">
+    <span class="tag" style="background:#2a2113;color:#fbc765;">בינוני</span>
+    <h4>8. Per-slot VRAM Attribution</h4>
+    <div class="desc">
+      חסום על Windows WDDM (nvidia-smi --query-compute-apps מחזיר [N/A]).
+      Fallback פרגמטי: גודל קובץ gguf * 1.15 כהערכה.
+    </div>
+  </div>
 </div>
 
 <!-- =========================================================
-     SECTION 13 — Quick reference
+     SECTION 14 — Quick reference
      ========================================================= -->
-<h2>13. Cheat sheet — פקודות נפוצות</h2>
+<h2>14. Cheat sheet — פקודות נפוצות</h2>
 
 <pre>
 # === הפעלה מלאה ===
@@ -1326,6 +1469,32 @@ def should_failover_to_next_slot(exc: Exception) -> bool:
     <b>Stats:</b> כל החלטה נרשמת, חיסכון מחושב, מוצג ב-dashboard בזמן אמת.<br/>
     <b>Result:</b> מערכת עצמאית שמחליטה בעצמה איזה LMM להשתמש, מתאוששת מכשלים,
     ומפיקה דוחות חיסכון — הכל ללא התערבות המשתמש.
+  </p>
+</div>
+
+<div class="callout info" style="margin-top:20px;">
+  <h4>🔍 ממצאי מחקר — 2026-05-11</h4>
+  <p>
+    <b>failover.py</b> (301 שורות) — מוכן להעתקה כמעט מלאה. מכיל:
+    <code>classify_failover_reason()</code> לזיהוי timeout/rate-limit/quota/provider-error,
+    <code>should_failover()</code> להחלטה, ו-<code>FailoverState</code> למעקב אחרי שרשרת.
+    <b>אימוץ:</b> החלף preset_names ב-slot URLs (8080→8088→openrouter).
+  </p>
+  <p>
+    <b>stats.py</b> (206 שורות) — מוכן להעתקה. מכיל:
+    <code>record_classification()</code> עם חישוב חיסכון אוטומטי,
+    <code>get_stats_summary()</code> ל-WebUI, ו-persistence ל-JSON.
+    <b>אימוץ:</b> החלף pricing.py בחישוב מקומי: local=0$, API=מחיר אמיתי.
+  </p>
+  <p>
+    <b>preset_bridge.py</b> (191 שורות) — דורש התאמה. מכיל:
+    <code>set_preset_override()</code> דרך <code>agent.context.set_data("chat_model_override", ...)</code>.
+    <b>אימוץ:</b> במקום preset_name, העבר slot URL ישירות.
+  </p>
+  <p>
+    <b>router.py</b> (148 שורות) — 7-rule decision tree. <b>אימוץ:</b>
+    החלף ONNX classifier ב-utility slot (phi35_mini, 50ms) לסיווג
+    chat/code/reason/search, ואז decision tree בוחר slot.
   </p>
 </div>
 

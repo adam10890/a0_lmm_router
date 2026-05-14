@@ -71,7 +71,17 @@ class RemoteBackend(InferenceBackend):
             if container_host:
                 host = f"{container_host}:{port}"
             else:
-                host = f"localhost:{port}"
+                status = SlotStatus(
+                    name=name,
+                    port=int(port),
+                    host="",
+                    model_id=config.get("model_id", ""),
+                    error=f"No remote host configured for slot role '{role}'",
+                    extra={"role": role},
+                )
+                self._slots[name] = status
+                logger.warning(status.error)
+                return status
 
         hostname, port = self._parse_host(host)
 
@@ -80,6 +90,7 @@ class RemoteBackend(InferenceBackend):
             port=port,
             host=hostname,
             model_id=config.get("model_id", ""),
+            extra={"role": role},
         )
 
         # Probe health

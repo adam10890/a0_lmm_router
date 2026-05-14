@@ -157,7 +157,7 @@ class LmmFleetIgnite(ApiHandler):
                 )
                 result["host_command"] = HOST_BAT_HINT
                 result["docker_compose_hint"] = (
-                    "docker compose -f docker-compose.lmm.yml up -d"
+                    "docker compose -f usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml up -d"
                 )
             else:
                 result["state"] = "partial"

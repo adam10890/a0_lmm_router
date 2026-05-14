@@ -72,11 +72,11 @@ def _load_global(config_path: str) -> dict[str, Any]:
 
 
 def _get_manager(config_path: str):
-    from usr.plugins.a0_lmm_router.helpers.llama_cpp_manager import LlamaCppManager
+    from usr.plugins.a0_lmm_router.helpers.llama_cpp_manager import BackendManager
 
     # Reset singleton so repeated CLI calls re-read the config on disk.
-    LlamaCppManager._instance = None  # noqa: SLF001
-    return LlamaCppManager(config_path=config_path)
+    BackendManager._instance = None  # noqa: SLF001
+    return BackendManager(config_path=config_path)
 
 
 def _print_banner(title: str, config_path: str | None) -> None:
@@ -102,19 +102,18 @@ def cmd_status(config_path: str | None) -> int:
         print(f"  ERROR: failed to build manager: {type(exc).__name__}: {exc}")
         return 4
 
-    if not manager.servers:
+    slots = getattr(manager, "_slot_configs", {})
+    if not slots:
         print("  slots: <none configured>")
         return 0
 
     print("  slots:")
-    for name, instance in manager.servers.items():
-        cfg = instance.config
+    for name, cfg in slots.items():
         print(
             f"    - {name:<20} "
-            f"port={cfg.port:<6} "
-            f"role={cfg.role.value:<10} "
-            f"enabled={cfg.enabled!s:<5} "
-            f"status={instance.status.value}"
+            f"port={cfg.get('port', '')!s:<6} "
+            f"role={cfg.get('role', '')!s:<10} "
+            f"enabled={cfg.get('enabled', True)!s:<5}"
         )
     return 0
 
@@ -123,12 +122,14 @@ async def _start_all(manager, slot: str | None) -> tuple[list[str], list[str]]:
     started: list[str] = []
     failed: list[str] = []
     if slot:
-        ok = await manager.start_server(slot)
+        result = await manager.start_slot(slot)
+        ok = bool(result.get("healthy") or result.get("running")) and not result.get("error")
         (started if ok else failed).append(slot)
         return started, failed
 
     results = await manager.start_all()
-    for name, ok in results.items():
+    for name, result in results.items():
+        ok = bool(result.get("healthy") or result.get("running")) and not result.get("error")
         (started if ok else failed).append(name)
     return started, failed
 
@@ -137,13 +138,13 @@ async def _stop_all(manager, slot: str | None) -> tuple[list[str], list[str]]:
     stopped: list[str] = []
     failed: list[str] = []
     if slot:
-        ok = await manager.stop_server(slot)
+        ok = await manager.stop_slot(slot)
         (stopped if ok else failed).append(slot)
         return stopped, failed
 
-    results = await manager.stop_all()
-    for name, ok in results.items():
-        (stopped if ok else failed).append(name)
+    names = list(getattr(manager, "_slot_configs", {}).keys())
+    await manager.stop_all()
+    stopped.extend(names)
     return stopped, failed
 
 
@@ -159,7 +160,7 @@ def cmd_start(config_path: str | None, slot: str | None) -> int:
         return 0
 
     manager = _get_manager(config_path)
-    if not manager.servers:
+    if not getattr(manager, "_slot_configs", {}):
         print("  slots: <none configured> — nothing to start")
         return 0
 
@@ -178,7 +179,7 @@ def cmd_stop(config_path: str | None, slot: str | None) -> int:
         return 2
 
     manager = _get_manager(config_path)
-    if not manager.servers:
+    if not getattr(manager, "_slot_configs", {}):
         print("  slots: <none configured> — nothing to stop")
         return 0
 

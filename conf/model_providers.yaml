@@ -7,15 +7,12 @@ generic_models:
   local-chat:
     description: "Best reasoning model (Qwen3.5-9B, 64K context)"
     current_model: "qwen3.5-9b"
-    model_path: "/models/utility/qwen3.5_9b/Qwen3.5-9B-Q4_K_M.gguf"
   local-utility:
     description: "Fast utility/coding model"
     current_model: "qwen3.5-9b"
-    model_path: "/models/utility/qwen3.5_9b/Qwen3.5-9B-Q4_K_M.gguf"
   local-embedding:
     description: "Text embedding model"
     current_model: "nomic-embed-text-v1.5"
-    model_path: "/models/embedding/nomic/nomic-embed-text-v1.5.Q4_K_M.gguf"
 
 providers:
   - id: llamacpp_local_chat
@@ -41,4 +38,4 @@ providers:
     api_key: "not-needed"
     roles: [embedding]
     description: "Local llama.cpp embedding server (slot_embed, port 8082)"
-    enabled: false
+    enabled: true

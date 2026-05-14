@@ -1,0 +1,227 @@
+# a0_lmm_router — llama.cpp fleet (GPU)
+#
+# Spawns llama-server containers on a shared Docker network so the
+# Agent Zero container (`agent-zero-2`) can reach them via
+# `host.docker.internal:<port>` (Docker Desktop on Windows handles the
+# loopback automatically).
+#
+# Located inside the plugin for self-contained deployment.
+#
+# Activation:
+#   docker compose -f usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml up -d
+#   docker compose -f usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml down
+#
+# Wire-in:
+#   start_agent_zero.bat runs this compose before triggering the
+#   a0_lmm_router launcher inside the A0 container.
+#
+# Optimization flags (all opt-in via .env):
+#   <SLOT>_NO_MMAP=1       → --no-mmap (pin model in RAM)
+#   <SLOT>_MLOCK=1         → --mlock (lock memory, prevent swap)
+#   <SLOT>_CPU_MOE=N       → --n-cpu-moe N (offload N experts to CPU)
+#   <SLOT>_CACHE_TYPE_K=X  → --cache-type-k X (f16|q8_0|q5_0|q4_0)
+#   <SLOT>_CACHE_TYPE_V=X  → --cache-type-v X (f16|q8_0|q5_0|q4_0)
+#   <SLOT>_GPU_LAYERS=N    → --n-gpu-layers N (default: 999)
+#
+# Requirements:
+#   - Docker Desktop with WSL2 + NVIDIA Container Toolkit
+#   - GGUF models under C:\Users\frant\A0-Data-Permanent\A0_v.adam\models
+#   - NVIDIA driver that supports CUDA 12.x (RTX 4090 covered)
+
+name: a0-lmm
+
+x-llama-base: &llama-base
+  image: ghcr.io/ggml-org/llama.cpp:server-cuda
+  restart: unless-stopped
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+  ulimits:
+    memlock: -1
+    stack: 67108864
+  # Host path where GGUF files live; mounted read-only to keep things safe.
+  volumes:
+    - type: bind
+      source: ${LLAMA_MODELS_DIR:-C:/Users/frant/A0-Data-Permanent/A0_v.adam/models}
+      target: /models
+      read_only: true
+  networks:
+    - a0-lmm-net
+  healthcheck:
+    test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+    interval: 15s
+    timeout: 5s
+    retries: 20
+    start_period: 120s
+
+services:
+
+  # -------------------------------------------------
+  # CHAT slot — primary general-purpose model
+  # -------------------------------------------------
+  a0-llama-chat:
+    <<: *llama-base
+    container_name: a0-llama-chat
+    ports:
+      - "8080:8080"
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--alias"
+      - "chat"
+      - "--model"
+      - "${CHAT_MODEL_PATH}"
+      - "--n-gpu-layers"
+      - "${CHAT_GPU_LAYERS:-999}"
+      - "--ctx-size"
+      - "${CHAT_CTX_SIZE:-65536}"
+      - "--parallel"
+      - "${CHAT_PARALLEL:-1}"
+      - "--batch-size"
+      - "${CHAT_BATCH_SIZE:-512}"
+      - "--flash-attn"
+      - "${CHAT_FLASH_ATTN:-on}"
+      # --- Optional optimization flags (opt-in via .env) ---
+      # Disabled temporarily - will be enabled via env vars in future
+
+  # -------------------------------------------------
+  # UTILITY slot — secondary model for sub-agents, wiki ops, tool calling
+  # -------------------------------------------------
+  a0-llama-utility:
+    <<: *llama-base
+    container_name: a0-llama-utility
+    ports:
+      - "8088:8080"
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--alias"
+      - "utility"
+      - "--model"
+      - "${UTILITY_MODEL_PATH}"
+      - "--n-gpu-layers"
+      - "${UTILITY_GPU_LAYERS:-999}"
+      - "--ctx-size"
+      - "${UTILITY_CTX_SIZE:-16384}"
+      - "--parallel"
+      - "${UTILITY_PARALLEL:-1}"
+      - "--batch-size"
+      - "${UTILITY_BATCH_SIZE:-512}"
+      - "--flash-attn"
+      - "${UTILITY_FLASH_ATTN:-on}"
+      # --- Optional optimization flags (opt-in via .env) ---
+      # Disabled temporarily
+
+  # -------------------------------------------------
+  # EMBEDDING slot — dedicated embeddings endpoint
+  # -------------------------------------------------
+  a0-llama-embed:
+    <<: *llama-base
+    container_name: a0-llama-embed
+    ports:
+      - "8082:8080"
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--alias"
+      - "embedding"
+      - "--model"
+      - "${EMBED_MODEL_PATH}"
+      - "--embedding"
+      - "--n-gpu-layers"
+      - "${EMBED_GPU_LAYERS:-999}"
+      - "--ctx-size"
+      - "${EMBED_CTX_SIZE:-8192}"
+      - "--batch-size"
+      - "${EMBED_BATCH_SIZE:-512}"
+      # --- Optional optimization flags (opt-in via .env) ---
+      # Disabled temporarily
+
+  # -------------------------------------------------
+  # VISION slot — multimodal (image+text). Disabled by default.
+  # Uncomment and set VISION_MODEL_PATH + VISION_MMPROJ_PATH in .env to activate.
+  # -------------------------------------------------
+  # a0-llama-vision:
+  #   <<: *llama-base
+  #   container_name: a0-llama-vision
+  #   ports:
+  #     - "8084:8080"
+  #   command:
+  #     - "--host"
+  #     - "0.0.0.0"
+  #     - "--port"
+  #     - "8080"
+  #     - "--alias"
+  #     - "vision"
+  #     - "--model"
+  #     - "${VISION_MODEL_PATH}"
+  #     - "--mmproj"
+  #     - "${VISION_MMPROJ_PATH}"
+  #     - "--n-gpu-layers"
+  #     - "${VISION_GPU_LAYERS:-999}"
+  #     - "--ctx-size"
+  #     - "${VISION_CTX_SIZE:-32768}"
+  #     - "--parallel"
+  #     - "${VISION_PARALLEL:-1}"
+  #     - "--batch-size"
+  #     - "${VISION_BATCH_SIZE:-512}"
+  #     - "--flash-attn"
+  #     - "${VISION_FLASH_ATTN:-on}"
+  #     # --- Optional optimization flags ---
+  #     - ${VISION_NO_MMAP:+--no-mmap}
+  #     - ${VISION_MLOCK:+--mlock}
+  #     - ${VISION_CACHE_TYPE_K:+--cache-type-k}
+  #     - ${VISION_CACHE_TYPE_K:+${VISION_CACHE_TYPE_K}}
+  #     - ${VISION_CACHE_TYPE_V:+--cache-type-v}
+  #     - ${VISION_CACHE_TYPE_V:+${VISION_CACHE_TYPE_V}}
+
+  # -------------------------------------------------
+  # REASONING slot — deep-thinking / chain-of-thought. Disabled by default.
+  # Uncomment and set REASONING_MODEL_PATH in .env to activate.
+  # -------------------------------------------------
+  # a0-llama-reasoning:
+  #   <<: *llama-base
+  #   container_name: a0-llama-reasoning
+  #   ports:
+  #     - "8086:8080"
+  #   command:
+  #     - "--host"
+  #     - "0.0.0.0"
+  #     - "--port"
+  #     - "8080"
+  #     - "--alias"
+  #     - "reasoning"
+  #     - "--model"
+  #     - "${REASONING_MODEL_PATH}"
+  #     - "--n-gpu-layers"
+  #     - "${REASONING_GPU_LAYERS:-999}"
+  #     - "--ctx-size"
+  #     - "${REASONING_CTX_SIZE:-32768}"
+  #     - "--parallel"
+  #     - "${REASONING_PARALLEL:-1}"
+  #     - "--batch-size"
+  #     - "${REASONING_BATCH_SIZE:-512}"
+  #     - "--flash-attn"
+  #     - "${REASONING_FLASH_ATTN:-on}"
+  #     # --- Optional optimization flags ---
+  #     - ${REASONING_NO_MMAP:+--no-mmap}
+  #     - ${REASONING_MLOCK:+--mlock}
+  #     - ${REASONING_CACHE_TYPE_K:+--cache-type-k}
+  #     - ${REASONING_CACHE_TYPE_K:+${REASONING_CACHE_TYPE_K}}
+  #     - ${REASONING_CACHE_TYPE_V:+--cache-type-v}
+  #     - ${REASONING_CACHE_TYPE_V:+${REASONING_CACHE_TYPE_V}}
+
+networks:
+  a0-lmm-net:
+    name: a0-lmm-net
+    driver: bridge

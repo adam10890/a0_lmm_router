@@ -35,25 +35,30 @@ class LlamaCppInitExtension(Extension):
                 "usr/plugins/a0_lmm_router/conf/llama_cpp_servers.yaml"
             )
             root_conf = files.get_abs_path("conf/llama_cpp_servers.yaml")
-            config_path = plugin_conf if os.path.exists(plugin_conf) else root_conf
+            env_conf = os.environ.get("A0_LMM_ROUTER_CONFIG", "")
+            config_path = env_conf if env_conf and os.path.exists(env_conf) else (
+                root_conf if os.path.exists(root_conf) else plugin_conf
+            )
             if not os.path.exists(config_path):
                 return  # plugin disabled / no config
 
-            from usr.plugins.a0_lmm_router.helpers.llama_cpp_manager import (
-                LlamaCppManager,
-            )
+            from usr.plugins.a0_lmm_router.helpers.llama_cpp_manager import BackendManager
 
-            manager = LlamaCppManager.get_instance(config_path)
+            manager = BackendManager.get_instance(config_path)
             # Expose the manager on the agent for downstream tools.
             if self.agent is not None:
                 self.agent.llama_cpp_manager = manager
+                self.agent.lmm_backend_manager = manager
 
-            global_cfg = manager.global_config or {}
+            global_cfg = getattr(manager, "global_config", {}) or {}
             if not global_cfg.get("auto_start", False):
                 # Respect the master switch; nothing to do.
                 return
 
-            enabled = [n for n, s in manager.servers.items() if s.config.enabled]
+            enabled = [
+                n for n, s in getattr(manager, "_slot_configs", {}).items()
+                if s.get("enabled", True)
+            ]
             if not enabled:
                 return
 

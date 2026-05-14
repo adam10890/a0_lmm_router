@@ -566,84 +566,10 @@ class LlamaCppManager:
             return False
         
         instance = self.servers[name]
-        
-        if instance.status == ServerStatus.RUNNING:
-            self.logger.info(f"Server '{name}' is already running")
-            return True
-        
-        if not instance.config.enabled:
-            self.logger.info(f"Server '{name}' is disabled")
-            return False
-        
-        # Check if model file exists
-        if not os.path.exists(instance.config.model_path):
-            instance.status = ServerStatus.ERROR
-            instance.error_message = f"Model file not found: {instance.config.model_path}"
-            self.logger.error(instance.error_message)
-            return False
-        
-        try:
-            instance.status = ServerStatus.STARTING
-            
-            cmd = self._build_server_command(instance.config)
-            self.logger.info(f"Starting server '{name}': {' '.join(cmd)}")
-            
-            # Set up environment
-            env = os.environ.copy()
-            cuda_devices = self.global_config.get('cuda_visible_devices')
-            if cuda_devices:
-                env['CUDA_VISIBLE_DEVICES'] = cuda_devices
-            
-            # Start process
-            log_dir = self.global_config.get('log_dir', 'logs/llama_cpp')
-            os.makedirs(log_dir, exist_ok=True)
-            
-            log_file = open(os.path.join(log_dir, f'{name}.log'), 'a')
-            
-            # Check if using WSL
-            use_wsl = self.global_config.get('use_wsl', False)
-            
-            if use_wsl and sys.platform == 'win32':
-                # Wrap command for WSL execution
-                wsl_cmd = ' '.join(cmd)
-                full_cmd = ['wsl', 'bash', '-c', f'nohup {wsl_cmd} > /dev/null 2>&1 &']
-                instance.process = subprocess.Popen(
-                    full_cmd,
-                    stdout=log_file,
-                    stderr=subprocess.STDOUT,
-                    env=env,
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
-                )
-            else:
-                instance.process = subprocess.Popen(
-                    cmd,
-                    stdout=log_file,
-                    stderr=subprocess.STDOUT,
-                    env=env,
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == 'win32' else 0,
-                )
-            
-            instance.pid = instance.process.pid
-            instance.start_time = time.time()
-            
-            # Wait for server to be ready
-            timeout = self.global_config.get('startup_timeout', 120)
-            if await self._wait_for_health(instance, timeout):
-                instance.status = ServerStatus.RUNNING
-                self.logger.info(f"Server '{name}' started successfully on port {instance.config.port}")
-                return True
-            else:
-                instance.status = ServerStatus.ERROR
-                instance.error_message = "Server failed to start within timeout"
-                self.logger.error(f"Server '{name}' failed to start")
-                await self.stop_server(name)
-                return False
-                
-        except Exception as e:
-            instance.status = ServerStatus.ERROR
-            instance.error_message = str(e)
-            self.logger.error(f"Failed to start server '{name}': {e}")
-            return False
+        instance.status = ServerStatus.ERROR
+        instance.error_message = "Legacy local llama.cpp launch is disabled; use BackendManager remote slots"
+        self.logger.error(instance.error_message)
+        return False
     
     async def _wait_for_health(self, instance: ServerInstance, timeout: int) -> bool:
         """Wait for server to become healthy."""
@@ -862,8 +788,10 @@ class BackendManager:
         self.config_path = config_path or _default_config_path()
         self._backend = None
         self._slot_configs: Dict[str, Dict[str, Any]] = {}
+        self.global_config: Dict[str, Any] = {}
         self.logger = logging.getLogger("lmm.backend_manager")
         self._load()
+        self._init_failover()  # Initialize failover chains and cooldown probes
     
     @classmethod
     def get_instance(cls, config_path: Optional[str] = None) -> 'BackendManager':
@@ -881,6 +809,7 @@ class BackendManager:
             config = yaml.safe_load(f) or {}
         
         global_config = config.get('global', {})
+        self.global_config = global_config
         
         # Expand env vars
         for key, value in global_config.items():
@@ -897,8 +826,9 @@ class BackendManager:
         self.logger.info(f"Backend: {self._backend.backend_type.value}")
         
         # Load slot configs
-        model_cards = self._load_model_cards(config)
-        models_dir = global_config.get('models_dir', '')
+        backend_type = self._backend.backend_type.value if self._backend else str(global_config.get('backend', 'auto')).lower()
+        model_cards = {} if backend_type == 'remote' else self._load_model_cards(config)
+        models_dir = '' if backend_type == 'remote' else global_config.get('models_dir', '')
         
         for slot in config.get('active_slots', []):
             if not slot or not slot.get('enabled', True):
@@ -906,9 +836,9 @@ class BackendManager:
             
             name = slot.get('id', f"slot_{slot.get('port', 'unknown')}")
             
-            # Resolve model_id → model_path
-            model_path = slot.get('model_path', '')
-            if not model_path and slot.get('model_id'):
+            # Resolve model_id → model_path only for backends that load local files.
+            model_path = '' if backend_type == 'remote' else slot.get('model_path', '')
+            if backend_type != 'remote' and not model_path and slot.get('model_id'):
                 model_path = self._resolve_model(slot['model_id'], model_cards, models_dir)
             
             slot_config = dict(slot)
@@ -985,6 +915,10 @@ class BackendManager:
         """Start all configured slots in parallel."""
         if not self._backend:
             return {}
+
+        # Lazy-start cooldown probes now that we have a running event loop.
+        if self._cooldown_config.enabled:
+            self._start_cooldown_probes()
         
         tasks = []
         names = []
@@ -1032,26 +966,244 @@ class BackendManager:
                 "container_id": s.container_id,
                 "pid": s.pid,
                 "error": s.error,
+                "role": s.extra.get("role", ""),
             }
             for name, s in slots.items()
         }
     
     def get_endpoint(self, role: str) -> Optional[str]:
         """Get the base URL for a slot by role name."""
+        if self._backend and hasattr(self._backend, "get_endpoint_by_role"):
+            endpoint = self._backend.get_endpoint_by_role(role)
+            if endpoint:
+                return endpoint
+        if self.backend_type == "remote":
+            return None
         for name, config in self._slot_configs.items():
             if config.get('role') == role:
                 port = config.get('port', 8080)
                 return f"http://localhost:{port}/v1"
         return None
 
+    # ═════════════════════════════════════════════════════════════════════════
+    # Failover Chain Support (adapted from tiny_router)
+    # ═════════════════════════════════════════════════════════════════════════
+
+    def _init_failover(self) -> None:
+        """Initialize failover chains and cooldown tracking."""
+        from usr.plugins.a0_lmm_router.helpers.smart_router.failover import (
+            CooldownProbe, CooldownTracker, DEFAULT_CHAINS
+        )
+
+        # Load custom chains from config if present
+        self._failover_chains = self.global_config.get('failover_chains', DEFAULT_CHAINS)
+        self._cooldown_config = CooldownProbe(
+            enabled=self.global_config.get('cooldown_probes_enabled', True),
+            interval_seconds=self.global_config.get('cooldown_probe_interval', 30),
+            max_attempts=self.global_config.get('cooldown_max_attempts', 10),
+            probe_timeout=self.global_config.get('cooldown_probe_timeout', 5),
+        )
+        self._cooldown_tracker = CooldownTracker()
+        self._failover_states: Dict[str, Any] = {}  # slot_id -> SlotFailoverState
+        self._cooldown_task: Optional[asyncio.Task] = None
+
+        # Cooldown probes are started lazily in start_all() to avoid
+        # calling asyncio.create_task() during synchronous __init__.
+        # During agent_init there may be no running event loop yet.
+
+    def _start_cooldown_probes(self) -> None:
+        """Start background cooldown probe task (requires running event loop)."""
+        if self._cooldown_task is not None and not self._cooldown_task.done():
+            return
+        try:
+            self._cooldown_task = asyncio.create_task(self._cooldown_probe_loop())
+            self.logger.info("Cooldown probe loop started")
+        except RuntimeError:
+            # No running event loop — will be retried later from start_all().
+            self.logger.debug("Cooldown probes deferred (no event loop)")
+
+    def _stop_cooldown_probes(self) -> None:
+        """Stop cooldown probe task."""
+        if self._cooldown_task and not self._cooldown_task.done():
+            self._cooldown_task.cancel()
+            self.logger.info("Cooldown probe loop stopped")
+
+    async def _cooldown_probe_loop(self) -> None:
+        """Background loop to probe ERROR slots for recovery."""
+        while True:
+            try:
+                await asyncio.sleep(self._cooldown_config.interval_seconds)
+
+                error_slots = self._cooldown_tracker.get_error_slots()
+                for slot_id in error_slots:
+                    if not self._cooldown_tracker.should_probe(slot_id, self._cooldown_config):
+                        continue
+
+                    self._cooldown_tracker.record_probe(slot_id)
+                    config = self._slot_configs.get(slot_id)
+                    if not config:
+                        continue
+
+                    # Try health check
+                    port = config.get('port', 8080)
+                    host = config.get('host', 'localhost')
+                    url = f"http://{host}:{port}/health"
+
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(url, timeout=self._cooldown_config.probe_timeout) as resp:
+                                if resp.status == 200:
+                                    data = await resp.json()
+                                    if data.get('status') == 'ok':
+                                        # Slot recovered!
+                                        self._cooldown_tracker.mark_recovered(slot_id)
+                                        self.logger.info(f"Slot '{slot_id}' recovered via cooldown probe")
+                                        # Record in stats
+                                        from usr.plugins.a0_lmm_router.helpers.stats_tracker import record_failover
+                                        record_failover(slot_id, slot_id, "recovery")
+                    except Exception:
+                        pass  # Still unhealthy, continue probing
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.error(f"Cooldown probe error: {e}")
+
+    def select_slot_with_failover(self, role: str, preferred_slot: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """
+        Select a slot for a given role, following failover chain if needed.
+
+        Returns dict with:
+            - slot_id: str
+            - url: str (full endpoint URL)
+            - is_failover: bool
+            - failover_reason: str (if is_failover)
+        """
+        from usr.plugins.a0_lmm_router.helpers.smart_router.failover import (
+            get_chain_for_role, get_next_in_chain, SlotFailoverState, create_decision
+        )
+
+        chain = get_chain_for_role(role, self._failover_chains)
+
+        # If preferred_slot specified, start from there; otherwise use first in chain
+        start_slot = preferred_slot or (chain[0] if chain else None)
+        if not start_slot:
+            return None
+
+        # Check if start_slot is healthy
+        slot_status = self._get_slot_health(start_slot)
+
+        if slot_status == 'healthy':
+            config = self._slot_configs.get(start_slot)
+            if config:
+                url = self._get_slot_url(start_slot, config)
+                return create_decision(
+                    slot_id=start_slot,
+                    url=url,
+                    role=role,
+                    reason=f"primary slot for role '{role}'",
+                    chain=chain,
+                ).__dict__
+
+        # Start_slot unhealthy — walk the failover chain
+        current = start_slot
+        reason = f"primary slot '{start_slot}' unhealthy" if slot_status == 'unhealthy' else f"primary slot '{start_slot}' not found"
+
+        while current:
+            next_slot = get_next_in_chain(current, chain)
+            if not next_slot:
+                break
+
+            slot_status = self._get_slot_health(next_slot)
+            if slot_status == 'healthy':
+                config = self._slot_configs.get(next_slot)
+                if config:
+                    url = self._get_slot_url(next_slot, config)
+                    # Record failover in stats
+                    from usr.plugins.a0_lmm_router.helpers.stats_tracker import record_failover
+                    record_failover(start_slot, next_slot, reason)
+
+                    return create_decision(
+                        slot_id=next_slot,
+                        url=url,
+                        role=role,
+                        reason=f"failover from '{start_slot}' to '{next_slot}'",
+                        chain=chain,
+                    ).__dict__
+
+            current = next_slot
+            reason = f"slot '{current}' unhealthy, continuing chain"
+
+        # Chain exhausted — no healthy slot found
+        self.logger.warning(f"Failover chain exhausted for role '{role}', no healthy slots")
+        return None
+
+    def _get_slot_health(self, slot_id: str) -> str:
+        """Check health of a slot: 'healthy', 'unhealthy', 'stopped', 'unknown'."""
+        # First check cooldown tracker for ERROR slots
+        if slot_id in self._cooldown_tracker.get_error_slots():
+            return 'unhealthy'
+
+        # Check via backend status
+        if not self._backend:
+            return 'unknown'
+
+        # Get current status from backend
+        # This is async, so we'll do a simple check based on last known state
+        config = self._slot_configs.get(slot_id)
+        if not config:
+            return 'unknown'
+
+        port = config.get('port', 8080)
+        host = config.get('host', 'localhost')
+        url = f"http://{host}:{port}/health"
+
+        # Note: This is a synchronous health check for quick decisions
+        # For production, consider async health checks
+        try:
+            import urllib.request
+            with urllib.request.urlopen(url, timeout=2) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode())
+                    if data.get('status') == 'ok':
+                        return 'healthy'
+            return 'unhealthy'
+        except Exception:
+            return 'unhealthy'
+
+    def _get_slot_url(self, slot_id: str, config: Dict[str, Any]) -> str:
+        """Get the full API URL for a slot."""
+        port = config.get('port', 8080)
+        host = config.get('host', 'localhost')
+        return f"http://{host}:{port}/v1"
+
+    def mark_slot_error(self, slot_id: str, error_message: str = "") -> None:
+        """Mark a slot as in ERROR state for cooldown probing."""
+        self._cooldown_tracker.mark_error(slot_id, error_message)
+        self.logger.warning(f"Slot '{slot_id}' marked error: {error_message}")
+
+    def get_failover_status(self) -> Dict[str, Any]:
+        """Get current failover and cooldown status for dashboard."""
+        from usr.plugins.a0_lmm_router.helpers.stats_tracker import get_stats_summary
+
+        stats = get_stats_summary(window="24h")
+        return {
+            "failover_chains": self._failover_chains,
+            "cooldown_enabled": self._cooldown_config.enabled,
+            "cooldown_interval": self._cooldown_config.interval_seconds,
+            "error_slots_being_probed": self._cooldown_tracker.get_error_slots(),
+            "failover_stats": stats.get("failovers", {}),
+            "slot_stats": stats.get("slots", []),
+        }
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Convenience functions (backward compat + new API)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_manager() -> LlamaCppManager:
-    """Get the global LlamaCppManager instance (legacy API)."""
-    return LlamaCppManager.get_instance()
+def get_manager() -> BackendManager:
+    """Get the global manager instance."""
+    return BackendManager.get_instance()
 
 
 def get_backend_manager() -> BackendManager:
@@ -1059,16 +1211,29 @@ def get_backend_manager() -> BackendManager:
     return BackendManager.get_instance()
 
 
-async def start_llama_servers() -> Dict[str, bool]:
-    """Start all configured llama.cpp servers (legacy API)."""
-    return await get_manager().start_all()
+async def start_llama_servers() -> Dict[str, Dict[str, Any]]:
+    """Start all configured slots."""
+    return await get_backend_manager().start_all()
 
 
-async def stop_llama_servers() -> Dict[str, bool]:
-    """Stop all running llama.cpp servers (legacy API)."""
-    return await get_manager().stop_all()
+async def stop_llama_servers() -> None:
+    """Stop tracking all configured slots."""
+    return await get_backend_manager().stop_all()
 
 
 def get_llama_status() -> Dict[str, Dict[str, Any]]:
-    """Get status of all llama.cpp servers (legacy API)."""
-    return get_manager().get_status()
+    """Get configured slot status without spawning local processes."""
+    manager = get_backend_manager()
+    return {
+        name: {
+            "configured": True,
+            "running": False,
+            "healthy": False,
+            "backend": manager.backend_type,
+            "port": config.get("port"),
+            "role": config.get("role", ""),
+            "model_id": config.get("model_id", ""),
+            "model_path": "",
+        }
+        for name, config in getattr(manager, "_slot_configs", {}).items()
+    }

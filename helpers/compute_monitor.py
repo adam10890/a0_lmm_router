@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, asdict
 
+import yaml
+
 logger = logging.getLogger(__name__)
 
 # Host helper fallback config (used when nvidia-smi is not available inside
@@ -256,41 +258,44 @@ def _probe_slot(host: str, port: int, timeout: float = 1.5) -> tuple[bool, bool]
 
 
 def _query_slots() -> List[SlotInfo]:
-    """Pull slot info from LlamaCppManager and probe each endpoint for liveness."""
     slots: List[SlotInfo] = []
     try:
-        from usr.plugins.a0_lmm_router.helpers.llama_cpp_manager import LlamaCppManager
+        conf = os.environ.get("A0_LMM_ROUTER_CONFIG", "").strip()
+        if not conf:
+            here = Path(__file__).resolve()
+            plugin_conf = str(here.parent.parent / "conf" / "llama_cpp_servers.yaml")
+            root_conf = str(here.parents[4] / "conf" / "llama_cpp_servers.yaml")
+            conf = plugin_conf if os.path.exists(plugin_conf) else root_conf
 
-        # Self-contained path resolution (avoids A0-core `helpers.files`
-        # which transitively imports `simpleeval` — a package that ships
-        # broken in the current agent0ai/agent-zero:latest image and would
-        # cause every slot query to silently fail with `slots=[]`).
-        here = Path(__file__).resolve()
-        plugin_conf = str(here.parent.parent / "conf" / "llama_cpp_servers.yaml")
-        root_conf = str(here.parents[4] / "conf" / "llama_cpp_servers.yaml")
-        conf = plugin_conf if os.path.exists(plugin_conf) else root_conf
+        with open(conf, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
 
-        # Reset singleton so config edits reflect without a container restart.
-        LlamaCppManager._instance = None  # noqa: SLF001
-        manager = LlamaCppManager.get_instance(conf)
+        global_config = data.get("global", {}) or {}
+        lmm_hosts = global_config.get("lmm_hosts", {}) or {}
 
-        lmm_hosts = (manager.global_config or {}).get("lmm_hosts", {}) or {}
+        for slot in data.get("active_slots", []) or []:
+            if not slot or not slot.get("enabled", True):
+                continue
 
-        for sid, srv in manager.servers.items():
-            cfg = srv.config
-            role = cfg.role.value if hasattr(cfg.role, "value") else str(cfg.role)
-            host_cfg = lmm_hosts.get(role, "host.docker.internal")
-            host_only = host_cfg.split(":")[0] if ":" in host_cfg else host_cfg
-            running, healthy = _probe_slot(host_only, cfg.port)
-
-            # Prefer a short, display-friendly model id over the full path.
-            model_id = cfg.specialty or (cfg.model_path.rsplit("/", 1)[-1] if cfg.model_path else "")
+            sid = slot.get("id", f"slot_{slot.get('port', 'unknown')}")
+            role = str(slot.get("role", ""))
+            port = int(slot.get("port", 0) or 0)
+            host_cfg = str(lmm_hosts.get(role, f"host.docker.internal:{port}"))
+            host_cfg = host_cfg.replace("http://", "").replace("https://", "").split("/", 1)[0]
+            host_only = host_cfg
+            probe_port = port
+            if ":" in host_cfg:
+                host_only, port_text = host_cfg.rsplit(":", 1)
+                if port_text.isdigit():
+                    probe_port = int(port_text)
+            running, healthy = _probe_slot(host_only, probe_port)
+            model_id = str(slot.get("model_id") or slot.get("specialty") or "")
 
             slots.append(SlotInfo(
                 id=sid,
                 role=role,
                 model_id=model_id,
-                port=cfg.port,
+                port=probe_port,
                 running=running,
                 healthy=healthy,
             ))
