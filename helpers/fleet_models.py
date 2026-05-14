@@ -102,6 +102,23 @@ def assign_model(slot: str, model_id: str, apply_now: bool = True) -> dict:
     }, timeout=180)
 
 
+def load_model(slot: str, model_id: str, ctx_size: int | None = None) -> dict:
+    """Load a model into a slot with auto-calculated context window.
+
+    Combined endpoint: assign + context calculation + container restart.
+    Inspired by lmstudio-js client.llm.load() — one call does everything.
+
+    Args:
+        slot: chat, utility, or embed
+        model_id: ID from the model manifest
+        ctx_size: Optional context window override (auto-calculated if None)
+    """
+    body: dict = {"slot": slot, "model_id": model_id}
+    if ctx_size is not None:
+        body["ctx_size"] = ctx_size
+    return _helper_request("POST", "/models/load", body, timeout=180)
+
+
 def fleet_status() -> dict:
     """Get fleet status including slots, health, and image version."""
     return _helper_request("GET", "/status")
