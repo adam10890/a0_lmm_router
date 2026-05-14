@@ -185,6 +185,25 @@
         .slot-ctx-input:focus { outline:none; border-color:var(--accent); }
         .slot-ctx-input::placeholder { color:var(--muted); font-family:inherit; }
 
+        /* Context Window Slider */
+        .ctx-slider-wrap { margin-top:8px; padding:8px 0 4px; }
+        .ctx-slider-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; }
+        .ctx-slider-label { font-size:.68rem; font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+        .ctx-slider-value { font-size:.76rem; font-weight:700; font-family:'SF Mono','Menlo','Consolas',monospace; }
+        .ctx-slider { -webkit-appearance:none; appearance:none; width:100%; height:6px; border-radius:3px;
+                      background:var(--color-bg,#1e1e2e); border:1px solid var(--border); outline:none; }
+        .ctx-slider::-webkit-slider-thumb { -webkit-appearance:none; appearance:none; width:16px; height:16px;
+                                             border-radius:50%; background:var(--slider-color, var(--ok));
+                                             border:2px solid var(--surface); cursor:pointer;
+                                             box-shadow:0 0 6px color-mix(in srgb, var(--slider-color, var(--ok)) 40%, transparent); }
+        .ctx-slider::-moz-range-thumb { width:16px; height:16px; border-radius:50%;
+                                        background:var(--slider-color, var(--ok)); border:2px solid var(--surface);
+                                        cursor:pointer; }
+        .ctx-slider-footer { display:flex; justify-content:space-between; align-items:center; margin-top:4px; }
+        .ctx-slider-min, .ctx-slider-max { font-size:.6rem; color:var(--muted); }
+        .ctx-slider-est { font-size:.66rem; font-weight:600;
+                          font-family:'SF Mono','Menlo','Consolas',monospace; }
+
         /* Install form */
         .install-form { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
         .install-input {
@@ -495,6 +514,30 @@
                         </button>
                       </div>
                     </div>
+
+                    <!-- Context Window Slider (inspired by LM Studio) -->
+                    <template x-if="s.selectedModelId || getSlotCurrentModelId(s)">
+                      <div class="ctx-slider-wrap">
+                        <div class="ctx-slider-header">
+                          <span class="ctx-slider-label">Context Window</span>
+                          <span class="ctx-slider-value"
+                                :style="'color:' + ctxVramColor(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || 8192)"
+                                x-text="((s._ctxSlider || 8192) / 1024).toFixed(0) + 'K tokens'"></span>
+                        </div>
+                        <input type="range" class="ctx-slider"
+                               min="2048" max="131072" step="2048"
+                               :value="s._ctxSlider || 8192"
+                               @input="s._ctxSlider = parseInt($event.target.value)"
+                               :style="'--slider-color:' + ctxVramColor(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || 8192)"/>
+                        <div class="ctx-slider-footer">
+                          <span class="ctx-slider-min">2K</span>
+                          <span class="ctx-slider-est"
+                                :style="'color:' + ctxVramColor(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || 8192)"
+                                x-text="'KV cache: ~' + estimateKVCacheGB(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || 8192).toFixed(1) + ' GB'"></span>
+                          <span class="ctx-slider-max">128K</span>
+                        </div>
+                      </div>
+                    </template>
 
                     <!-- Swap in progress indicator -->
                     <div class="slot-swap-spinner" x-show="swapInProgress[s.id]">
