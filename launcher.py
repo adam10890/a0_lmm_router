@@ -199,6 +199,19 @@ def cmd_restart(config_path: str | None) -> int:
     return rc_start if rc_start else rc_stop if rc_stop in (0, 3) else rc_stop
 
 
+def cmd_mcp(config_path: str | None) -> int:
+    """Start the MCP server (Streamable HTTP, default port 8095)."""
+    _print_banner("mcp", config_path)
+    # Resolve sys.path so mcp_server.* imports work from any cwd.
+    plugin_dir = str(PLUGIN_DIR)
+    if plugin_dir not in sys.path:
+        sys.path.insert(0, plugin_dir)
+
+    from mcp_server.server import main as mcp_main  # noqa: PLC0415
+    mcp_main()
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="a0_lmm_router.launcher",
@@ -216,6 +229,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("restart", help="stop then start all enabled slots")
 
+    sub.add_parser("mcp", help="start the MCP server (Streamable HTTP, default :8095)")
+
     return parser
 
 
@@ -232,6 +247,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_stop(config_path, args.slot)
         if args.cmd == "restart":
             return cmd_restart(config_path)
+        if args.cmd == "mcp":
+            return cmd_mcp(config_path)
     except KeyboardInterrupt:
         print("aborted", file=sys.stderr)
         return 130
