@@ -5,29 +5,29 @@
  * exposes reactive data for GPU, CPU, slots, and model recommendations.
  */
 
-var POLL_INTERVAL_MS = 5000;
-// A0 dispatches all plugin APIs under /api/plugins/<plugin_name>/<handler>.
-// (See /a0/helpers/api.py register_api_route.)
-var API_BASE = '/api/plugins/a0_lmm_router';
-
-var ENDPOINTS = {
-  computeStats: `${API_BASE}/lmm_compute_stats`,
-  statsSummary: `${API_BASE}/lmm_stats_summary`,
-  recommend:    `${API_BASE}/lmm_model_recommend`,
-  install:      `${API_BASE}/lmm_model_install`,
-  listModels:   `${API_BASE}/llamacpp_list_models`,
-  assignModel:  `${API_BASE}/assign_model`,
-  loadModel:    `${API_BASE}/load_model`,
-  jobStatus:    `${API_BASE}/job_status`,
-  control:      `${API_BASE}/llamacpp_control`,
-  status:       `${API_BASE}/llamacpp_status`,
-  ignite:       `${API_BASE}/lmm_fleet_ignite`,
-  hostIgnite:   `${API_BASE}/lmm_host_ignite`,
-  hardwareScan: `${API_BASE}/lmm_hardware_recommend`,
-  slotRecs:     `${API_BASE}/lmm_slot_recommendations`,
-};
-
 function createDashboardStore() {
+  const POLL_INTERVAL_MS = 5000;
+  // A0 dispatches all plugin APIs under /api/plugins/<plugin_name>/<handler>.
+  // (See /a0/helpers/api.py register_api_route.)
+  const API_BASE = '/api/plugins/a0_lmm_router';
+
+  const ENDPOINTS = {
+    computeStats: `${API_BASE}/lmm_compute_stats`,
+    statsSummary: `${API_BASE}/lmm_stats_summary`,
+    recommend:    `${API_BASE}/lmm_model_recommend`,
+    install:      `${API_BASE}/lmm_model_install`,
+    listModels:   `${API_BASE}/llamacpp_list_models`,
+    assignModel:  `${API_BASE}/assign_model`,
+    loadModel:    `${API_BASE}/load_model`,
+    jobStatus:    `${API_BASE}/job_status`,
+    control:      `${API_BASE}/llamacpp_control`,
+    status:       `${API_BASE}/llamacpp_status`,
+    ignite:       `${API_BASE}/lmm_fleet_ignite`,
+    hostIgnite:   `${API_BASE}/lmm_host_ignite`,
+    hardwareScan: `${API_BASE}/lmm_hardware_recommend`,
+    slotRecs:     `${API_BASE}/lmm_slot_recommendations`,
+  };
+
   return {
     // ── state ──────────────────────────────────────────────────
     gpus: [],
@@ -141,13 +141,7 @@ function createDashboardStore() {
 
     async _fetchInstalledModels() {
       try {
-        const r = await fetch(ENDPOINTS.listModels, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({}),
-        });
-        const d = await r.json();
+        const d = await window.api.callJsonApi(ENDPOINTS.listModels, {});
         if (d.ok && d.models) {
           this.installedModels = d.models;
         }
@@ -156,13 +150,7 @@ function createDashboardStore() {
 
     async _fetchStatsSummary() {
       try {
-        const r = await fetch(ENDPOINTS.statsSummary, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ window: this.statsWindow }),
-        });
-        const d = await r.json();
+        const d = await window.api.callJsonApi(ENDPOINTS.statsSummary, { window: this.statsWindow });
         if (d.ok && d.stats) {
           this.stats = d.stats;
         }
@@ -176,13 +164,7 @@ function createDashboardStore() {
 
     async _fetchStats() {
       try {
-        const r = await fetch(ENDPOINTS.computeStats, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({}),
-        });
-        const d = await r.json();
+        const d = await window.api.callJsonApi(ENDPOINTS.computeStats, {});
         if (d.ok) {
           this.gpus = d.gpus || [];
           this.cpu = d.cpu || this.cpu;
@@ -199,13 +181,7 @@ function createDashboardStore() {
 
     async _fetchRecommendations() {
       try {
-        const r = await fetch(ENDPOINTS.recommend, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({}),
-        });
-        const d = await r.json();
+        const d = await window.api.callJsonApi(ENDPOINTS.recommend, {});
         if (d.ok) this.recommendations = d.recommendations || [];
       } catch (_) { /* silent */ }
     },
@@ -216,13 +192,7 @@ function createDashboardStore() {
     // internally reads compute_monitor + tier_catalog + fleet_models.
     async _fetchSlotRecommendations() {
       try {
-        const r = await fetch(ENDPOINTS.slotRecs, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({}),
-        });
-        const d = await r.json();
+        const d = await window.api.callJsonApi(ENDPOINTS.slotRecs, {});
         if (!d.ok) {
           this.slotRecsError = d.error || 'Slot recommendations failed';
           return;
@@ -257,13 +227,7 @@ function createDashboardStore() {
       this.hw.loading = true;
       this.hw.error = '';
       try {
-        const r = await fetch(ENDPOINTS.hardwareScan, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({}),
-        });
-        const d = await r.json();
+        const d = await window.api.callJsonApi(ENDPOINTS.hardwareScan, {});
         if (!d.ok) {
           this.hw.error = d.error || 'Scan failed';
           this.hw.loading = false;
@@ -313,16 +277,10 @@ function createDashboardStore() {
     // ── actions ────────────────────────────────────────────────
     async hostAction(action) {
       this.igniteState = 'pending';
-      this.igniteMessage = `Calling host helper: ${action}…`;
+      this.igniteMessage = 'Communicating with host...';
       this.igniteHostHint = '';
       try {
-        const r = await fetch(ENDPOINTS.hostIgnite, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ action }),
-        });
-        const d = await r.json();
+        const d = await window.api.callJsonApi(ENDPOINTS.hostIgnite, { action });
         if (!d.ok) {
           this.igniteState = 'error';
           this.igniteMessage = d.error || 'host helper call failed';
@@ -344,13 +302,7 @@ function createDashboardStore() {
       this.igniteMessage = 'Checking fleet…';
       this.igniteHostHint = '';
       try {
-        const r = await fetch(ENDPOINTS.ignite, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({}),
-        });
-        const d = await r.json();
+        const d = await window.api.callJsonApi(ENDPOINTS.ignite, {});
         if (!d.ok) {
           this.igniteState = 'error';
           this.igniteMessage = d.error || 'ignite failed';
@@ -372,13 +324,7 @@ function createDashboardStore() {
 
     async controlSlot(op, serverId) {
       try {
-        const r = await fetch(ENDPOINTS.control, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ data: { operation: op, server: serverId } }),
-        });
-        await r.json();
+        await window.api.callJsonApi(ENDPOINTS.control, { data: { operation: op, server: serverId } });
         await this._fetchStats();
       } catch (_) { /* silent */ }
     },
@@ -387,13 +333,7 @@ function createDashboardStore() {
       const key = rec.filename;
       this.installStatus[key] = { status: 'downloading', percent: 0, job_id: null };
       try {
-        const r = await fetch(ENDPOINTS.install, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ repo_id: rec.repo_id, filename: rec.filename, role: rec.role }),
-        });
-        const d = await r.json();
+        const d = await window.api.callJsonApi(ENDPOINTS.install, { repo_id: rec.repo_id, filename: rec.filename, role: rec.role });
         if (d.ok && d.job_id) {
           this.installStatus[key].job_id = d.job_id;
           // Start polling job status
@@ -418,25 +358,13 @@ function createDashboardStore() {
       this.installForm.success = '';
 
       try {
-        const r = await fetch(ENDPOINTS.install, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ repo_id: repo, filename: file, role }),
-        });
-        const d = await r.json();
+        const d = await window.api.callJsonApi(ENDPOINTS.install, { repo_id: repo, filename: file, role });
         if (d.ok && d.job_id) {
           this.installForm.jobId = d.job_id;
           // Poll the job
           const timer = setInterval(async () => {
             try {
-              const jr = await fetch(ENDPOINTS.jobStatus, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'same-origin',
-                body: JSON.stringify({ job_id: d.job_id }),
-              });
-              const jd = await jr.json();
+              const jd = await window.api.callJsonApi(ENDPOINTS.jobStatus, { job_id: d.job_id });
               if (jd.ok) {
                 this.installForm.progress = jd.percent || 0;
                 this.installForm.status = jd.status;
@@ -472,13 +400,7 @@ function createDashboardStore() {
       // Poll every 2 seconds
       const timer = setInterval(async () => {
         try {
-          const r = await fetch(ENDPOINTS.jobStatus, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'same-origin',
-            body: JSON.stringify({ job_id: jobId }),
-          });
-          const d = await r.json();
+          const d = await window.api.callJsonApi(ENDPOINTS.jobStatus, { job_id: jobId });
           if (d.ok) {
             this.installStatus[statusKey].percent = d.percent || 0;
             if (d.status === 'done') {
@@ -505,13 +427,7 @@ function createDashboardStore() {
     async assignModelToSlot(slotId, modelId) {
       this.swapInProgress[slotId] = true;
       try {
-        const r = await fetch(ENDPOINTS.assignModel, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ slot: slotId, model_id: modelId, apply_now: true }),
-        });
-        const d = await r.json();
+        const d = await window.api.callJsonApi(ENDPOINTS.assignModel, { slot: slotId, model_id: modelId, apply_now: true });
         if (d.ok) {
           // Wait a bit for container restart, then refresh
           setTimeout(() => this._fetchStats(), 5000);
@@ -683,13 +599,7 @@ function createDashboardStore() {
       try {
         const body = { slot: slotId, model_id: modelId };
         if (ctxSize) body.ctx_size = parseInt(ctxSize);
-        const r = await fetch(ENDPOINTS.loadModel, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify(body),
-        });
-        const d = await r.json();
+        const d = await window.api.callJsonApi(ENDPOINTS.loadModel, body);
         if (d.ok) {
           setTimeout(() => this._fetchStats(), 3000);
           return { ok: true, context: d.context };

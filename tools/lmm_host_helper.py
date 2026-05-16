@@ -50,9 +50,12 @@ from urllib.parse import parse_qs, urlparse, unquote
 # Add helpers to path for context calculator
 sys.path.insert(0, str(Path(__file__).parent.parent / "helpers"))
 try:
-    from context_calculator import calculate_optimal_context
+    from context_calculator import calculate_optimal_context, read_gguf_metadata
+    calculate_optimal_context = calculate_optimal_context  # type: ignore
+    read_gguf_metadata = read_gguf_metadata  # type: ignore
 except ImportError:
-    calculate_optimal_context = None
+    calculate_optimal_context = None  # type: ignore
+    read_gguf_metadata = None  # type: ignore
 
 # Optional huggingface_hub for model downloads
 try:
@@ -207,6 +210,14 @@ def _scan_models_dir(models_dir: str) -> dict:
         size_gb = round(path.stat().st_size / (1024**3), 2)
         model_id = path.stem  # filename without .gguf
 
+        # Read GGUF metadata if context_calculator is available
+        gguf_metadata = {}
+        if read_gguf_metadata:
+            try:
+                gguf_metadata = read_gguf_metadata(str(path))
+            except Exception as e:
+                print(f"[WARNING] Failed to read GGUF metadata for {path.name}: {e}")
+
         models[model_id] = {
             "file": path.name,
             "path": str(Path(rel).parent) if len(parts) > 1 else "",
@@ -214,6 +225,10 @@ def _scan_models_dir(models_dir: str) -> dict:
             "size_gb": size_gb,
             "role_hint": role_hint,
             "sha256": "",  # computed on verify
+            # GGUF metadata for context calculation and UI display
+            "n_ctx_train": gguf_metadata.get("n_ctx_train"),
+            "n_layer": gguf_metadata.get("n_layer"),
+            "n_embd": gguf_metadata.get("n_embd"),
         }
     return models
 

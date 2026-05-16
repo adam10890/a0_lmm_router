@@ -525,7 +525,7 @@
                                 x-text="((s._ctxSlider || 8192) / 1024).toFixed(0) + 'K tokens'"></span>
                         </div>
                         <input type="range" class="ctx-slider"
-                               min="2048" max="131072" step="2048"
+                               min="2048" :max="(installedModels[s.selectedModelId || getSlotCurrentModelId(s)]?.n_ctx_train || 131072)" step="2048"
                                :value="s._ctxSlider || 8192"
                                @input="s._ctxSlider = parseInt($event.target.value)"
                                :style="'--slider-color:' + ctxVramColor(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || 8192)"/>
@@ -534,7 +534,7 @@
                           <span class="ctx-slider-est"
                                 :style="'color:' + ctxVramColor(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || 8192)"
                                 x-text="'KV cache: ~' + estimateKVCacheGB(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || 8192).toFixed(1) + ' GB'"></span>
-                          <span class="ctx-slider-max">128K</span>
+                          <span class="ctx-slider-max" x-text="((installedModels[s.selectedModelId || getSlotCurrentModelId(s)]?.n_ctx_train || 131072) / 1024).toFixed(0) + 'K'"></span>
                         </div>
                       </div>
                     </template>
