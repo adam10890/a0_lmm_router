@@ -224,4 +224,9 @@ services:
 networks:
   a0-lmm-net:
     name: a0-lmm-net
-    driver: bridge
+    external: true
+    # Network is pre-created by start_agent_zero.bat (so the A0 container
+    # and llama-server slots can share it). Marking external means compose
+    # will attach to it rather than try to create a new one with the same
+    # name — which otherwise fails with "network exists but was not
+    # created by compose".
