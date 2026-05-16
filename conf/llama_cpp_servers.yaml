@@ -159,3 +159,12 @@ hardware:
     max_concurrent_gpu_models: 3
     max_concurrent_cpu_models: 1
     max_total_models: 4
+
+# -----------------------------------------------------------------
+# MCP Server (Streamable HTTP — MCP spec 2025-06-18)
+# Clients connect to:  http://<host>:<port>/mcp
+# -----------------------------------------------------------------
+mcp_server:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8095
