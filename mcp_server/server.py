@@ -63,7 +63,9 @@ def _load_mcp_config() -> dict:
     return {}
 
 
-def create_app() -> FastMCP:
+def create_app(host: str = "0.0.0.0", port: int = 8095) -> FastMCP:
+    # host/port are passed to FastMCP at construction time; mcp>=1.10 dropped
+    # them from FastMCP.run() kwargs and reads them from settings instead.
     mcp = FastMCP(
         "lmm-router",
         instructions=(
@@ -71,6 +73,8 @@ def create_app() -> FastMCP:
             "get_embeddings for vectors, fleet_status to inspect slots, "
             "and start_fleet / stop_slot to manage containers."
         ),
+        host=host,
+        port=port,
     )
     register_tools(mcp)
     register_resources(mcp)
@@ -86,12 +90,12 @@ def main() -> None:
         logger.info("MCP server disabled in config (mcp_server.enabled=false). Exiting.")
         return
 
-    mcp = create_app()
+    mcp = create_app(host=host, port=port)
 
     logger.info("Starting lmm-router MCP server on %s:%d/mcp (Streamable HTTP)", host, port)
     logger.info("Inspector: npx @modelcontextprotocol/inspector http://%s:%d/mcp", host, port)
 
-    mcp.run(transport="streamable-http", host=host, port=port)
+    mcp.run(transport="streamable-http")
 
 
 if __name__ == "__main__":
