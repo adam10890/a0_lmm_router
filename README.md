@@ -2,7 +2,7 @@
 
 **Unified LMM (Local Multimodal Model) Server Management + Smart Routing for Agent Zero**
 
-Version: `1.0.0` · Merged from `a0_lmm` + `a0_smart_router` · Target: Agent Zero v0.9.7 / v1.9+
+Version: `1.3.0` · Merged from `a0_lmm` + `a0_smart_router` + MCP server · Target: Agent Zero v0.9.7 – v1.15
 
 ---
 
@@ -52,6 +52,52 @@ This plugin replaces the deprecated `a0_lmm` and `a0_smart_router` plugins with 
 - **Config panel** (`config.html`) — slot list, start/stop controls, model picker, status badges
 - **Dashboard** (`dashboard.html`) — real-time mission-control view of GPU, CPU, RAM, and slot health with 5s polling
 - **Dev Tracker** (`dev-tracker.html`) — visual development status radiator (phases, bugs, APIs, self-review results)
+
+### MCP Server (v1.3+)
+
+The plugin includes a **Model Context Protocol (MCP) server** that exposes router capabilities to any MCP-aware client (Agent Zero, Claude Desktop, Cursor, mcp-inspector, etc.). Runs as Streamable HTTP on port 8095, spec version `2025-06-18`.
+
+**Tools exposed:** `chat_completion`, `utility_completion`, `route_completion`, `get_embeddings`, `fleet_status`, `start_fleet`, `start_slot`, `stop_slot`, `list_slots`.
+
+**Resources exposed:** `models://fleet/status`, `models://{slot_id}/info`, `models://hardware/profile`, `models://slots/list`.
+
+#### Quick wiring (Agent Zero v1.15)
+
+1. Start the MCP server inside the A0 container:
+   ```cmd
+   docker exec -d agent-zero-2 /opt/venv-a0/bin/python /a0/usr/plugins/a0_lmm_router/launcher.py mcp
+   ```
+   `start_agent_zero.bat` does this automatically since v1.3.
+2. In the A0 WebUI → **Settings → MCP Servers Configuration JSON**, add:
+   ```json
+   "lmm-router": {
+     "type": "streamable-http",
+     "url": "http://localhost:8095/mcp"
+   }
+   ```
+   > ⚠️ The key is **`type`**, not `transport`. A0 silently ignores `transport`, falls back to default SSE, and you'll see `400 Bad Request` on `GET /mcp`.
+3. Click **Apply now**. The server appears in the status list with 9 tools.
+
+#### Smoke test from inside the container
+```cmd
+docker exec agent-zero-2 /opt/venv-a0/bin/python -c "
+import asyncio
+from mcp.client.streamable_http import streamablehttp_client
+from mcp import ClientSession
+async def main():
+    async with streamablehttp_client('http://localhost:8095/mcp') as (r,w,sid):
+        async with ClientSession(r,w) as s:
+            await s.initialize()
+            tools = await s.list_tools()
+            print([t.name for t in tools.tools])
+asyncio.run(main())
+"
+```
+
+#### Logs and lifecycle
+- Live log: `docker exec agent-zero-2 cat /tmp/mcp_server.log`
+- Restart: `docker exec agent-zero-2 pkill -f "launcher.py mcp"` then re-run the launcher command
+- `stop_agent_zero.bat` shuts down the MCP server before stopping the container
 
 ---
 
@@ -112,15 +158,29 @@ This plugin replaces the deprecated `a0_lmm` and `a0_smart_router` plugins with 
 
 ## Installation
 
-### Option A: Already present in this repo
+### One-click install (recommended for new users)
 
-The plugin is installed at `usr/plugins/a0_lmm_router/`. It is activated by the presence of `.toggle-1`.
+1. **Download** the release ZIP — `dist/a0_lmm_router-1.3.0.zip` from this repo or from your GitHub release page.
+2. **Extract** into your Agent Zero workspace under `usr/plugins/`:
+   ```powershell
+   Expand-Archive -Path "a0_lmm_router-1.3.0.zip" `
+                  -DestinationPath "C:\path\to\agent-zero-2\usr\plugins\a0_lmm_router" -Force
+   ```
+3. **Restart** Agent Zero. The plugin's `hooks.install()` runs automatically and installs Python deps (`mcp`, `aiohttp`, `pyyaml`) into the A0 venv if missing.
+4. **Activate** via the WebUI: Plugin List → a0_lmm_router → toggle ON. (Or create file `.toggle-1` at the plugin root.)
+5. **Wire the MCP server** (one-time): WebUI → Settings → MCP Servers Configuration JSON → add the snippet shown in [MCP Server (v1.3+)](#mcp-server-v13) above. Click **Apply now**.
 
-### Option B: Install from ZIP into another A0 instance
+That's it. The plugin self-registers, its dashboard appears under `/a0/usr/plugins/a0_lmm_router/webui/dashboard.html`, and 9 MCP tools become available to any A0 agent.
+
+### Option B: Already present in this repo (dev workflow)
+
+The plugin is installed at `usr/plugins/a0_lmm_router/`. It is activated by the presence of `.toggle-1`. Use the included `start_agent_zero.bat` which boots the llama.cpp fleet, the host helper, the A0 container, and the MCP server in the right order.
+
+### Option C: Manual install from ZIP into another A0 instance
 
 ```powershell
 # Extract the ZIP into the target A0 instance's plugins directory
-Expand-Archive -Path "dist\a0_lmm_router.zip" `
+Expand-Archive -Path "dist\a0_lmm_router-1.3.0.zip" `
                -DestinationPath "C:\path\to\agent-zero\usr\plugins\a0_lmm_router" `
                -Force
 
@@ -130,7 +190,7 @@ Remove-Item -Recurse -Force `
   "C:\path\to\agent-zero\usr\plugins\a0_smart_router"
 ```
 
-Then restart the A0 container. The plugin auto-registers on startup via the `agent_init` extension.
+Then restart the A0 container. The plugin auto-registers on startup via the `agent_init` extension and `hooks.install()` ensures Python deps are present.
 
 ### Activation
 
