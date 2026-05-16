@@ -26,7 +26,7 @@ if _A0_ROOT not in sys.path and os.path.isdir(_A0_ROOT):
 
 def _get_manager():
     """Return the BackendManager singleton."""
-    from helpers.llama_cpp_manager import BackendManager  # noqa: PLC0415
+    from usr.plugins.a0_lmm_router.helpers.llama_cpp_manager import BackendManager  # noqa: PLC0415
     return BackendManager.get_instance()
 
 
