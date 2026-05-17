@@ -5,6 +5,23 @@
  * exposes reactive data for GPU, CPU, slots, and model recommendations.
  */
 
+// ── A0 API compatibility shim ────────────────────────────────────────────
+// A0 v1.15 dropped `window.api` and exposes only `globalThis.sendJsonData`.
+// Older A0 versions had both. Use whichever exists so the dashboard works
+// across versions.
+function _a0ApiCall(endpoint, data) {
+  if (typeof window.sendJsonData === 'function') {
+    return window.sendJsonData(endpoint, data);
+  }
+  if (window.api && typeof window.api.callJsonApi === 'function') {
+    return window.api.callJsonApi(endpoint, data);
+  }
+  return Promise.reject(new Error(
+    'A0 API client not found - neither window.sendJsonData nor window.api.callJsonApi is defined. ' +
+    'Open this dashboard from inside the A0 WebUI (not as a standalone file).'
+  ));
+}
+
 function createDashboardStore() {
   const POLL_INTERVAL_MS = 5000;
   // A0 dispatches all plugin APIs under /api/plugins/<plugin_name>/<handler>.
@@ -141,7 +158,7 @@ function createDashboardStore() {
 
     async _fetchInstalledModels() {
       try {
-        const d = await window.api.callJsonApi(ENDPOINTS.listModels, {});
+        const d = await _a0ApiCall(ENDPOINTS.listModels, {});
         if (d.ok && d.models) {
           this.installedModels = d.models;
         }
@@ -150,7 +167,7 @@ function createDashboardStore() {
 
     async _fetchStatsSummary() {
       try {
-        const d = await window.api.callJsonApi(ENDPOINTS.statsSummary, { window: this.statsWindow });
+        const d = await _a0ApiCall(ENDPOINTS.statsSummary, { window: this.statsWindow });
         if (d.ok && d.stats) {
           this.stats = d.stats;
         }
@@ -164,7 +181,7 @@ function createDashboardStore() {
 
     async _fetchStats() {
       try {
-        const d = await window.api.callJsonApi(ENDPOINTS.computeStats, {});
+        const d = await _a0ApiCall(ENDPOINTS.computeStats, {});
         if (d.ok) {
           this.gpus = d.gpus || [];
           this.cpu = d.cpu || this.cpu;
@@ -181,7 +198,7 @@ function createDashboardStore() {
 
     async _fetchRecommendations() {
       try {
-        const d = await window.api.callJsonApi(ENDPOINTS.recommend, {});
+        const d = await _a0ApiCall(ENDPOINTS.recommend, {});
         if (d.ok) this.recommendations = d.recommendations || [];
       } catch (_) { /* silent */ }
     },
@@ -192,7 +209,7 @@ function createDashboardStore() {
     // internally reads compute_monitor + tier_catalog + fleet_models.
     async _fetchSlotRecommendations() {
       try {
-        const d = await window.api.callJsonApi(ENDPOINTS.slotRecs, {});
+        const d = await _a0ApiCall(ENDPOINTS.slotRecs, {});
         if (!d.ok) {
           this.slotRecsError = d.error || 'Slot recommendations failed';
           return;
@@ -227,7 +244,7 @@ function createDashboardStore() {
       this.hw.loading = true;
       this.hw.error = '';
       try {
-        const d = await window.api.callJsonApi(ENDPOINTS.hardwareScan, {});
+        const d = await _a0ApiCall(ENDPOINTS.hardwareScan, {});
         if (!d.ok) {
           this.hw.error = d.error || 'Scan failed';
           this.hw.loading = false;
@@ -280,7 +297,7 @@ function createDashboardStore() {
       this.igniteMessage = 'Communicating with host...';
       this.igniteHostHint = '';
       try {
-        const d = await window.api.callJsonApi(ENDPOINTS.hostIgnite, { action });
+        const d = await _a0ApiCall(ENDPOINTS.hostIgnite, { action });
         if (!d.ok) {
           this.igniteState = 'error';
           this.igniteMessage = d.error || 'host helper call failed';
@@ -302,7 +319,7 @@ function createDashboardStore() {
       this.igniteMessage = 'Checking fleet…';
       this.igniteHostHint = '';
       try {
-        const d = await window.api.callJsonApi(ENDPOINTS.ignite, {});
+        const d = await _a0ApiCall(ENDPOINTS.ignite, {});
         if (!d.ok) {
           this.igniteState = 'error';
           this.igniteMessage = d.error || 'ignite failed';
@@ -324,7 +341,7 @@ function createDashboardStore() {
 
     async controlSlot(op, serverId) {
       try {
-        await window.api.callJsonApi(ENDPOINTS.control, { data: { operation: op, server: serverId } });
+        await _a0ApiCall(ENDPOINTS.control, { data: { operation: op, server: serverId } });
         await this._fetchStats();
       } catch (_) { /* silent */ }
     },
@@ -333,7 +350,7 @@ function createDashboardStore() {
       const key = rec.filename;
       this.installStatus[key] = { status: 'downloading', percent: 0, job_id: null };
       try {
-        const d = await window.api.callJsonApi(ENDPOINTS.install, { repo_id: rec.repo_id, filename: rec.filename, role: rec.role });
+        const d = await _a0ApiCall(ENDPOINTS.install, { repo_id: rec.repo_id, filename: rec.filename, role: rec.role });
         if (d.ok && d.job_id) {
           this.installStatus[key].job_id = d.job_id;
           // Start polling job status
@@ -358,13 +375,13 @@ function createDashboardStore() {
       this.installForm.success = '';
 
       try {
-        const d = await window.api.callJsonApi(ENDPOINTS.install, { repo_id: repo, filename: file, role });
+        const d = await _a0ApiCall(ENDPOINTS.install, { repo_id: repo, filename: file, role });
         if (d.ok && d.job_id) {
           this.installForm.jobId = d.job_id;
           // Poll the job
           const timer = setInterval(async () => {
             try {
-              const jd = await window.api.callJsonApi(ENDPOINTS.jobStatus, { job_id: d.job_id });
+              const jd = await _a0ApiCall(ENDPOINTS.jobStatus, { job_id: d.job_id });
               if (jd.ok) {
                 this.installForm.progress = jd.percent || 0;
                 this.installForm.status = jd.status;
@@ -400,7 +417,7 @@ function createDashboardStore() {
       // Poll every 2 seconds
       const timer = setInterval(async () => {
         try {
-          const d = await window.api.callJsonApi(ENDPOINTS.jobStatus, { job_id: jobId });
+          const d = await _a0ApiCall(ENDPOINTS.jobStatus, { job_id: jobId });
           if (d.ok) {
             this.installStatus[statusKey].percent = d.percent || 0;
             if (d.status === 'done') {
@@ -427,7 +444,7 @@ function createDashboardStore() {
     async assignModelToSlot(slotId, modelId) {
       this.swapInProgress[slotId] = true;
       try {
-        const d = await window.api.callJsonApi(ENDPOINTS.assignModel, { slot: slotId, model_id: modelId, apply_now: true });
+        const d = await _a0ApiCall(ENDPOINTS.assignModel, { slot: slotId, model_id: modelId, apply_now: true });
         if (d.ok) {
           // Wait a bit for container restart, then refresh
           setTimeout(() => this._fetchStats(), 5000);
@@ -599,7 +616,7 @@ function createDashboardStore() {
       try {
         const body = { slot: slotId, model_id: modelId };
         if (ctxSize) body.ctx_size = parseInt(ctxSize);
-        const d = await window.api.callJsonApi(ENDPOINTS.loadModel, body);
+        const d = await _a0ApiCall(ENDPOINTS.loadModel, body);
         if (d.ok) {
           setTimeout(() => this._fetchStats(), 3000);
           return { ok: true, context: d.context };
