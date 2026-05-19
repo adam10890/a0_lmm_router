@@ -1,3 +1,51 @@
+# lmm-router
+
+> **You are reading the standalone variant.**
+> This codebase has a sibling — the Agent Zero plugin at
+> [`adam10890/a0_lmm_router`](https://github.com/adam10890/a0_lmm_router)
+> (tracked here as the `a0-plugin` git remote on the `main` branch).
+>
+> The two evolve in parallel. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the
+> cherry-pick workflow that keeps shared improvements flowing between them.
+
+**Unified Local-Model Server Management + Smart Routing + MCP Server**
+
+Run llama.cpp model slots (chat / utility / embed / vision / reasoning) with
+hardware-aware load/unload, MTP-capable speculative decoding, a real-time
+dashboard, an HF model installer, and a Streamable-HTTP MCP server that
+exposes everything to any MCP client.
+
+Originally extracted from the `a0_lmm_router` Agent Zero plugin v1.3.0.
+
+## Quick start (standalone)
+
+```bash
+git clone <this repo> lmm-router
+cd lmm-router
+pip install -e .
+lmm-router status        # check current path resolution
+lmm-mcp-server           # start MCP server on :8095
+```
+
+Environment variables that override defaults:
+
+| Variable          | Default                       | Purpose                          |
+|-------------------|-------------------------------|----------------------------------|
+| `LMM_HOME`        | repo root                     | Code location                    |
+| `LMM_CONFIG`      | `<repo>/conf/llama_cpp_servers.yaml` | Fleet config           |
+| `LMM_TOKEN_PATH`  | `<repo>/tmp/host_token`       | Host helper auth token           |
+| `LMM_LOG_DIR`     | `<repo>/logs`                 | Log directory                    |
+| `MCP_PORT`        | `8095`                        | MCP server port                  |
+
+---
+
+## Original README (Agent Zero plugin context)
+
+The rest of this document describes the plugin variant. Most of it
+applies verbatim to standalone — only the install/launch steps differ.
+
+---
+
 # a0_lmm_router
 
 **Unified LMM (Local Multimodal Model) Server Management + Smart Routing for Agent Zero**

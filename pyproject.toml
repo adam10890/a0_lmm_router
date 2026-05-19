@@ -1,0 +1,88 @@
+# ============================================================
+# lmm-router — Standalone Local-Model Fleet Manager
+# ============================================================
+# Parallel to the a0_lmm_router Agent Zero plugin
+# (see CONTRIBUTING.md for the dual-repo cherry-pick workflow).
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lmm-router"
+version = "1.3.0"
+description = "Local Multi-Model fleet manager: llama.cpp slot control, MCP server, hardware-aware model routing"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Adam Frantz" }
+]
+keywords = ["llama.cpp", "local-llm", "gguf", "mcp", "fleet", "router", "mtp"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "aiohttp>=3.9.0",
+    "mcp>=1.22.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+]
+
+[project.urls]
+"A0 Plugin Variant" = "https://github.com/adam10890/a0_lmm_router"
+
+[project.scripts]
+# CLI entry points — once installed via `pip install -e .` these become
+# real shell commands.
+lmm-router       = "launcher:main"
+lmm-mcp-server   = "mcp_server.server:main"
+lmm-host-helper  = "tools.lmm_host_helper:main"
+
+# ============================================================
+# Package discovery
+# ============================================================
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+    "api*",
+    "helpers*",
+    "mcp_server*",
+    "tools*",
+    "extensions*",
+]
+exclude = [
+    "tests*",
+    "patches*",
+    "dist*",
+    "scripts*",
+    "webui*",
+    "__pycache__*",
+]
+
+[tool.setuptools.package-data]
+"*" = ["*.yaml", "*.yml", "*.html", "*.js", "*.css"]
+
+# ============================================================
+# Ruff config — lightweight, no surprises
+# ============================================================
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+exclude = ["dist", "patches", "_old_*.py", "__pycache__"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
