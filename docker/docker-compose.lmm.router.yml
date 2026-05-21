@@ -1,0 +1,112 @@
+# docker-compose.lmm.router.yml — llama.cpp native Router Mode
+#
+# ALTERNATIVE to docker-compose.lmm.yml (the 3-slot fleet). Runs a SINGLE
+# llama.cpp container that registers multiple GGUFs via --models-dir and
+# hot-swaps between them on demand based on the "model" field in API
+# requests. Same client-facing port (8080) as the chat slot, so existing
+# clients that point at host.docker.internal:8080 keep working.
+#
+# Reference: llama.cpp Router Mode (--models-dir / --models-preset).
+# Verified flag support in image ghcr.io/ggml-org/llama.cpp:server-cuda
+# as of 2026-05-21 — all four Router flags present in --help.
+#
+# ─────────────────────────────────────────────────────────────────────
+# Usage:
+#   Start (instead of docker-compose.lmm.yml):
+#     docker network create a0-lmm-net 2>nul
+#     docker compose -f usr/plugins/a0_lmm_router/docker/docker-compose.lmm.router.yml \
+#                    --env-file usr/plugins/a0_lmm_router/docker/docker-compose.lmm.env \
+#                    up -d
+#
+#   Stop:
+#     docker compose -f usr/plugins/a0_lmm_router/docker/docker-compose.lmm.router.yml \
+#                    --env-file usr/plugins/a0_lmm_router/docker/docker-compose.lmm.env \
+#                    down
+#
+#   Or use start_router_mode.bat in this folder.
+#
+# IMPORTANT: this compose and docker-compose.lmm.yml share port 8080 and
+# the same `project name: a0-lmm`. Run ONE OR THE OTHER, never both.
+# ─────────────────────────────────────────────────────────────────────
+
+name: a0-lmm
+
+services:
+
+  a0-llama-router:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: a0-llama-router
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ports:
+      # Single port for ALL models. Clients select via "model" field.
+      - "8080:8080"
+    volumes:
+      # Host models directory mounted read-only.
+      - type: bind
+        source: ${LLAMA_MODELS_DIR:-C:/Users/frant/A0-Data-Permanent/A0_v.adam/models}
+        target: /models
+        read_only: true
+      # Preset file mounted at a path OUTSIDE /models (which is read-only
+      # and won't let docker create a single-file mountpoint inside it).
+      # Kept in the plugin (not the models dir) so it lives with the rest
+      # of the plugin config and is checked into git.
+      - type: bind
+        source: ../conf/models_preset.ini
+        target: /etc/llama/preset.ini
+        read_only: true
+    networks:
+      - a0-lmm-net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      # Router Mode doesn't load a model at boot (we use --no-models-autoload),
+      # so /health responds almost immediately — shorter start_period is fine.
+      start_period: 30s
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      # ── Router Mode flags ────────────────────────────────────────────
+      - "--models-dir"
+      - "${ROUTER_MODELS_DIR:-/models}"
+      - "--models-preset"
+      - "${ROUTER_MODELS_PRESET:-/etc/llama/preset.ini}"
+      - "--models-max"
+      - "${ROUTER_MODELS_MAX:-2}"
+      # --models-autoload: load on first request (NOT eagerly at boot —
+      # verified empirically). With --no-models-autoload the router
+      # returns 400 "model is not loaded" for any request, requiring an
+      # explicit /load call first. We want lazy-on-first-request, which
+      # is --models-autoload (the binary's default; set explicitly for
+      # clarity). VRAM stays bounded by --models-max.
+      - "--models-autoload"
+      # ── Shared inference defaults ───────────────────────────────────
+      # Each preset entry can override these per-alias.
+      - "--ctx-size"
+      - "${ROUTER_CTX_SIZE:-65536}"
+      - "--n-gpu-layers"
+      - "${ROUTER_GPU_LAYERS:-999}"
+      - "--parallel"
+      - "${ROUTER_PARALLEL:-4}"
+      - "--batch-size"
+      - "${ROUTER_BATCH_SIZE:-512}"
+      - "--flash-attn"
+      - "${ROUTER_FLASH_ATTN:-on}"
+
+networks:
+  a0-lmm-net:
+    name: a0-lmm-net
+    external: true
