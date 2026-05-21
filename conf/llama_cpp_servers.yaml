@@ -23,6 +23,30 @@
 #
 # Each id becomes a ServerInstance inside LlamaCppManager.
 active_slots:
+
+  # ──────────────────────────────────────────────────────────────
+  # ROUTER MODE EXAMPLE (commented out — enables hot-swap for all roles)
+  # This single slot replaces the three fixed slots below.
+  # One container, all models loaded on demand.
+  # ──────────────────────────────────────────────────────────────
+  # - id: slot_router
+  #   port: 8080
+  #   role: chat           # default role; clients override via "model" param
+  #   context_size: 65536
+  #   gpu_layers: -1
+  #   batch_size: 512
+  #   threads: 8
+  #   parallel_slots: 1
+  #   flash_attention: on
+  #   enabled: true
+  #   # --- Router Mode ---
+  #   router_mode: true
+  #   router_models_dir: "/models"          # all GGUFs in this dir are registered
+  #   router_models_autoload: true          # register without loading into VRAM
+  #   router_models_preset: "/models/preset.ini"  # per-model ctx/temp/quant settings
+  #   router_models_max: 1                  # 1 = hot-swap (saves VRAM)
+  #                                         # 2+ = keep N models loaded simultaneously
+
   - id: slot_chat
     port: 8080
     model_id: qwen3_5_9b
@@ -117,6 +141,29 @@ slot_defaults:
   draft_max: 0
   draft_min: 0
   draft_p_min: 0.0
+
+  # ── Native Router Mode (llama.cpp --models-dir hot-swap) ──────
+  # When router_mode: true, the slot does NOT load a fixed model.
+  # Instead llama.cpp registers all GGUFs in router_models_dir and
+  # hot-swaps on demand — one model in VRAM at a time (models_max: 1).
+  #
+  # Benefits:
+  #   - One container serves ALL roles; no need to run 3 separate containers
+  #   - Models swap automatically based on the "model" field in API requests
+  #   - New models dropped into the folder are registered without restart
+  #
+  # Usage:
+  #   1. Set router_mode: true on the slot
+  #   2. Set router_models_dir to the GGUF directory path
+  #   3. Optionally point router_models_preset to a .ini file
+  #      (see conf/models_preset_example.ini for format)
+  #   4. Set router_models_max: 1 for hot-swap (saves VRAM)
+  #      or higher to keep multiple models loaded simultaneously
+  router_mode: false
+  router_models_dir: ""
+  router_models_autoload: true
+  router_models_preset: ""
+  router_models_max: 1
 
 # -----------------------------------------------------------------
 # Global settings

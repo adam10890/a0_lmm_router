@@ -127,6 +127,15 @@ class ServerConfig:
     ssl_key_file: str = ""
     ssl_cert_file: str = ""
 
+    # Native Router Mode (llama.cpp --models-dir / --models-autoload)
+    # When router_mode=True the server registers ALL models in models_dir and
+    # hot-swaps between them on demand. --model is NOT passed in this mode.
+    router_mode: bool = False
+    router_models_dir: str = ""       # container/host path to GGUF directory
+    router_models_autoload: bool = True  # pass --models-autoload at startup
+    router_models_preset: str = ""    # path to .ini preset file
+    router_models_max: int = 1        # 1 = hot-swap; >1 = keep N models in VRAM
+
 
 @dataclass
 class ServerInstance:
@@ -252,8 +261,14 @@ class LlamaCppManager:
                     metrics=slot.get('metrics', slot_defaults.get('metrics', False)),
                     ssl_key_file=slot.get('ssl_key_file', slot_defaults.get('ssl_key_file', '')),
                     ssl_cert_file=slot.get('ssl_cert_file', slot_defaults.get('ssl_cert_file', '')),
+                    # Router Mode fields
+                    router_mode=slot.get('router_mode', slot_defaults.get('router_mode', False)),
+                    router_models_dir=slot.get('router_models_dir', slot_defaults.get('router_models_dir', '')),
+                    router_models_autoload=slot.get('router_models_autoload', slot_defaults.get('router_models_autoload', True)),
+                    router_models_preset=slot.get('router_models_preset', slot_defaults.get('router_models_preset', '')),
+                    router_models_max=slot.get('router_models_max', slot_defaults.get('router_models_max', 1)),
                 )
-                
+
                 self.servers[name] = ServerInstance(config=server_config)
         
         # Also load legacy 'servers' dict format for backward compatibility
@@ -452,15 +467,9 @@ class LlamaCppManager:
         """Build command line arguments for llama.cpp server (b8047+ compatible)."""
         use_wsl = self.global_config.get('use_wsl', False)
         binary = self._get_server_binary()
-        
-        # Convert model path for WSL if needed
-        model_path = config.model_path
-        if use_wsl:
-            model_path = self._convert_path_to_wsl(model_path)
-        
+
         cmd = [
             binary,
-            '-m', model_path,
             '-c', str(config.context_size),
             '-b', str(config.batch_size),
             '-t', str(config.threads),
@@ -468,6 +477,29 @@ class LlamaCppManager:
             '--port', str(config.port),
             '--host', '0.0.0.0',
         ]
+
+        if config.router_mode:
+            # ── Router Mode: directory-based hot-swap ─────────────────
+            models_dir = config.router_models_dir
+            if use_wsl:
+                models_dir = self._convert_path_to_wsl(models_dir)
+            if models_dir:
+                cmd.extend(['--models-dir', models_dir])
+            if config.router_models_autoload:
+                cmd.append('--models-autoload')
+            if config.router_models_preset:
+                preset = config.router_models_preset
+                if use_wsl:
+                    preset = self._convert_path_to_wsl(preset)
+                cmd.extend(['--models-preset', preset])
+            if config.router_models_max > 0:
+                cmd.extend(['--models-max', str(config.router_models_max)])
+        else:
+            # ── Single-model mode (default) ────────────────────────────
+            model_path = config.model_path
+            if use_wsl:
+                model_path = self._convert_path_to_wsl(model_path)
+            cmd.extend(['-m', model_path])
         
         # GPU layers: int or str "auto"/"all"
         if config.gpu_layers != 0:
@@ -962,8 +994,10 @@ class BackendManager:
         if not self._backend:
             return {}
         slots = await self._backend.list_slots()
-        return {
-            name: {
+        result = {}
+        for name, s in slots.items():
+            cfg = self._slot_configs.get(name, {})
+            result[name] = {
                 "running": s.running,
                 "healthy": s.healthy,
                 "port": s.port,
@@ -973,9 +1007,14 @@ class BackendManager:
                 "pid": s.pid,
                 "error": s.error,
                 "role": s.extra.get("role", ""),
+                # Router Mode fields (from slot config)
+                "router_mode": cfg.get("router_mode", False),
+                "router_models_dir": cfg.get("router_models_dir", ""),
+                "router_models_preset": cfg.get("router_models_preset", ""),
+                "router_models_max": cfg.get("router_models_max", 1),
+                "router_models_autoload": cfg.get("router_models_autoload", True),
             }
-            for name, s in slots.items()
-        }
+        return result
     
     def get_endpoint(self, role: str) -> Optional[str]:
         """Get the base URL for a slot by role name."""

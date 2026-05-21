@@ -227,10 +227,6 @@ class SubprocessBackend(InferenceBackend):
         use_wsl = self.global_config.get("use_wsl", False)
         binary = self._get_binary()
 
-        model_path = config.get("model_path", "")
-        if use_wsl:
-            model_path = self._convert_wsl_path(model_path)
-
         port = int(config.get("port", 8080))
         ctx = int(config.get("context_size", 8192))
         batch = int(config.get("batch_size", 512))
@@ -238,9 +234,33 @@ class SubprocessBackend(InferenceBackend):
         parallel = int(config.get("parallel_slots", 1))
         gpu_layers = config.get("gpu_layers", -1)
 
-        cmd = [
-            binary,
-            "-m", model_path,
+        cmd = [binary]
+
+        if config.get("router_mode"):
+            # ── Router Mode: directory-based hot-swap ─────────────────
+            rdir = config.get("router_models_dir", "")
+            if use_wsl and rdir:
+                rdir = self._convert_wsl_path(rdir)
+            if rdir:
+                cmd.extend(["--models-dir", rdir])
+            if config.get("router_models_autoload", True):
+                cmd.append("--models-autoload")
+            preset = config.get("router_models_preset", "")
+            if use_wsl and preset:
+                preset = self._convert_wsl_path(preset)
+            if preset:
+                cmd.extend(["--models-preset", preset])
+            rmax = int(config.get("router_models_max", 1))
+            if rmax > 0:
+                cmd.extend(["--models-max", str(rmax)])
+        else:
+            # ── Single-model mode (default) ────────────────────────────
+            model_path = config.get("model_path", "")
+            if use_wsl:
+                model_path = self._convert_wsl_path(model_path)
+            cmd.extend(["-m", model_path])
+
+        cmd += [
             "-c", str(ctx),
             "-b", str(batch),
             "-t", str(threads),
