@@ -127,6 +127,18 @@ class ServerConfig:
     ssl_key_file: str = ""
     ssl_cert_file: str = ""
 
+    # Native Router Mode (llama.cpp --models-dir / --models-autoload)
+    # When router_mode=True the server registers ALL models in models_dir and
+    # hot-swaps between them on demand. --model is NOT passed in this mode.
+    router_mode: bool = False
+    router_models_dir: str = ""       # container/host path to GGUF directory
+    router_models_autoload: bool = True  # pass --models-autoload at startup
+    router_models_preset: str = ""    # path to .ini preset file
+    router_models_max: int = 1        # 1 = hot-swap; >1 = keep N models in VRAM
+    # Default model alias (from preset.ini) to pre-load on startup via --model.
+    # Set from the dashboard; persisted in conf/router_state.json.
+    router_default_model: str = ""
+
 
 @dataclass
 class ServerInstance:
@@ -252,8 +264,14 @@ class LlamaCppManager:
                     metrics=slot.get('metrics', slot_defaults.get('metrics', False)),
                     ssl_key_file=slot.get('ssl_key_file', slot_defaults.get('ssl_key_file', '')),
                     ssl_cert_file=slot.get('ssl_cert_file', slot_defaults.get('ssl_cert_file', '')),
+                    # Router Mode fields
+                    router_mode=slot.get('router_mode', slot_defaults.get('router_mode', False)),
+                    router_models_dir=slot.get('router_models_dir', slot_defaults.get('router_models_dir', '')),
+                    router_models_autoload=slot.get('router_models_autoload', slot_defaults.get('router_models_autoload', True)),
+                    router_models_preset=slot.get('router_models_preset', slot_defaults.get('router_models_preset', '')),
+                    router_models_max=slot.get('router_models_max', slot_defaults.get('router_models_max', 1)),
                 )
-                
+
                 self.servers[name] = ServerInstance(config=server_config)
         
         # Also load legacy 'servers' dict format for backward compatibility
@@ -448,19 +466,28 @@ class LlamaCppManager:
             path = f"/mnt/{drive}{path[2:]}"
         return path
     
+    @staticmethod
+    def _resolve_preset_alias(preset_path: str, alias: str, models_dir: str) -> str:
+        """Return the full model path for an alias in a .ini preset file."""
+        import configparser  # noqa: PLC0415
+        if not preset_path or not os.path.exists(preset_path):
+            return ""
+        cp = configparser.ConfigParser()
+        cp.read(preset_path, encoding="utf-8")
+        for section in cp.sections():
+            a = cp.get(section, "alias", fallback=section)
+            if a == alias:
+                rel = cp.get(section, "model", fallback="")
+                return os.path.join(models_dir, rel) if (models_dir and rel) else rel
+        return ""
+
     def _build_server_command(self, config: ServerConfig) -> List[str]:
         """Build command line arguments for llama.cpp server (b8047+ compatible)."""
         use_wsl = self.global_config.get('use_wsl', False)
         binary = self._get_server_binary()
-        
-        # Convert model path for WSL if needed
-        model_path = config.model_path
-        if use_wsl:
-            model_path = self._convert_path_to_wsl(model_path)
-        
+
         cmd = [
             binary,
-            '-m', model_path,
             '-c', str(config.context_size),
             '-b', str(config.batch_size),
             '-t', str(config.threads),
@@ -468,6 +495,38 @@ class LlamaCppManager:
             '--port', str(config.port),
             '--host', '0.0.0.0',
         ]
+
+        if config.router_mode:
+            # ── Router Mode: directory-based hot-swap ─────────────────
+            models_dir = config.router_models_dir
+            if use_wsl:
+                models_dir = self._convert_path_to_wsl(models_dir)
+            if models_dir:
+                cmd.extend(['--models-dir', models_dir])
+            if config.router_models_autoload:
+                cmd.append('--models-autoload')
+            if config.router_models_preset:
+                preset = config.router_models_preset
+                if use_wsl:
+                    preset = self._convert_path_to_wsl(preset)
+                cmd.extend(['--models-preset', preset])
+            if config.router_models_max > 0:
+                cmd.extend(['--models-max', str(config.router_models_max)])
+            # Pre-load the default model so first request has zero swap latency
+            if config.router_default_model and config.router_models_preset:
+                default_path = self._resolve_preset_alias(
+                    config.router_models_preset, config.router_default_model, models_dir
+                )
+                if default_path:
+                    if use_wsl:
+                        default_path = self._convert_path_to_wsl(default_path)
+                    cmd.extend(['--model', default_path])
+        else:
+            # ── Single-model mode (default) ────────────────────────────
+            model_path = config.model_path
+            if use_wsl:
+                model_path = self._convert_path_to_wsl(model_path)
+            cmd.extend(['-m', model_path])
         
         # GPU layers: int or str "auto"/"all"
         if config.gpu_layers != 0:
@@ -850,7 +909,29 @@ class BackendManager:
             slot_config = dict(slot)
             slot_config['model_path'] = model_path
             self._slot_configs[name] = slot_config
-    
+
+        # Overlay persistent router state (set via dashboard)
+        self._apply_router_state()
+
+    def _apply_router_state(self) -> None:
+        """Overlay conf/router_state.json onto _slot_configs (non-destructive)."""
+        import json  # noqa: PLC0415
+        for candidate in [
+            "/a0/conf/router_state.json",
+            os.path.join(os.path.dirname(self.config_path), "router_state.json"),
+        ]:
+            if os.path.exists(candidate):
+                try:
+                    with open(candidate, encoding="utf-8") as f:
+                        state = json.load(f)
+                    for slot_id, overrides in state.items():
+                        if slot_id in self._slot_configs:
+                            self._slot_configs[slot_id].update(overrides)
+                    self.logger.info(f"Router state loaded from {candidate}")
+                except Exception as exc:
+                    self.logger.warning(f"Could not load router_state.json: {exc}")
+                break
+
     def _load_model_cards(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """Load model cards for model_id → path resolution."""
         cards = {}
@@ -962,8 +1043,10 @@ class BackendManager:
         if not self._backend:
             return {}
         slots = await self._backend.list_slots()
-        return {
-            name: {
+        result = {}
+        for name, s in slots.items():
+            cfg = self._slot_configs.get(name, {})
+            result[name] = {
                 "running": s.running,
                 "healthy": s.healthy,
                 "port": s.port,
@@ -973,9 +1056,14 @@ class BackendManager:
                 "pid": s.pid,
                 "error": s.error,
                 "role": s.extra.get("role", ""),
+                # Router Mode fields (from slot config)
+                "router_mode": cfg.get("router_mode", False),
+                "router_models_dir": cfg.get("router_models_dir", ""),
+                "router_models_preset": cfg.get("router_models_preset", ""),
+                "router_models_max": cfg.get("router_models_max", 1),
+                "router_models_autoload": cfg.get("router_models_autoload", True),
             }
-            for name, s in slots.items()
-        }
+        return result
     
     def get_endpoint(self, role: str) -> Optional[str]:
         """Get the base URL for a slot by role name."""

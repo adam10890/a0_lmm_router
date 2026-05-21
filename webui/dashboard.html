@@ -270,6 +270,52 @@
         .model-card-path { font-size:.62rem; color:var(--muted); margin-top:6px; overflow:hidden;
                            text-overflow:ellipsis; white-space:nowrap;
                            font-family:'SF Mono','Menlo','Consolas',monospace; }
+
+        /* Router Mode badge & config panel */
+        .badge-router {
+          display:inline-block; font-size:.62rem; font-weight:700; letter-spacing:.04em;
+          background:linear-gradient(135deg,#cba6f7,#89b4fa);
+          color:#1e1e2e; padding:2px 7px; border-radius:10px;
+          vertical-align:middle; margin-left:6px;
+        }
+        .slot-router-dir {
+          display:block; font-size:.68rem; color:var(--muted);
+          margin-top:2px; font-family:'SF Mono','Menlo','Consolas',monospace;
+        }
+        .slot-router-panel {
+          margin-top:8px; border:1px solid #cba6f730;
+          border-radius:8px; background:#cba6f708;
+        }
+        .slot-router-summary {
+          padding:5px 10px; font-size:.72rem; color:#cba6f7;
+          cursor:pointer; list-style:none;
+        }
+        .slot-router-summary::-webkit-details-marker { display:none; }
+        .slot-router-grid {
+          display:grid; grid-template-columns:90px 1fr;
+          gap:3px 10px; padding:8px 12px; font-size:.7rem;
+        }
+        .srg-label { color:var(--muted); }
+        .srg-val   { color:var(--color-fg,#cdd6f4); font-family:'SF Mono','Menlo','Consolas',monospace; }
+        .slot-router-hint {
+          padding:5px 12px 8px; font-size:.68rem; color:var(--muted);
+          border-top:1px solid #cba6f720;
+        }
+        .slot-router-hint code {
+          background:var(--color-bg,#1e1e2e); padding:1px 5px;
+          border-radius:4px; border:1px solid var(--border);
+          font-family:'SF Mono','Menlo','Consolas',monospace;
+        }
+        .slot-router-default {
+          padding:8px 12px 6px; border-top:1px solid #cba6f720;
+        }
+        .slot-router-default-row { display:flex; gap:6px; align-items:center; margin-top:4px; }
+        .slot-router-sel { min-width:180px; font-size:.72rem; }
+        .slot-router-msg {
+          margin-top:5px; font-size:.68rem; color:var(--ok); padding:3px 6px;
+          background:#a6e3a115; border-radius:4px;
+        }
+        .slot-router-msg.err { color:var(--err); background:#f38ba815; }
       </style>
 
       <div class="lmm-dash">
@@ -487,11 +533,84 @@
                 <div class="slot-item" :class="(s.running && !s.healthy) ? 'broken' : ''">
                   <div class="slot-dot" :class="s.running ? (s.healthy ? 'on' : 'warn') : 'off'"></div>
                   <div style="min-width:0">
-                    <div class="slot-name" x-text="s.id"></div>
-                    <div class="slot-meta" x-text="s.role + (s.model_id ? ' · ' + s.model_id : '') + (s.port ? ' · :' + s.port : '')"></div>
+                    <div class="slot-name" x-text="s.id">
+                      <template x-if="s.router_mode">
+                        <span class="badge-router" title="Native Router Mode — hot-swaps models on demand">⚡ ROUTER</span>
+                      </template>
+                    </div>
+                    <div class="slot-meta">
+                      <span x-text="s.role + (s.router_mode ? '' : (s.model_id ? ' · ' + s.model_id : '')) + (s.port ? ' · :' + s.port : '')"></span>
+                      <template x-if="s.router_mode && s.router_models_dir">
+                        <span class="slot-router-dir" x-text="'📁 ' + s.router_models_dir"></span>
+                      </template>
+                    </div>
 
-                    <!-- Unified Load Panel (inspired by lmstudio-js client.llm.load()) -->
-                    <div class="slot-load-panel" x-show="!swapInProgress[s.id]">
+                    <!-- Router Mode config panel (shown only in router mode) -->
+                    <template x-if="s.router_mode">
+                      <details class="slot-router-panel"
+                               @toggle="if ($el.open && !routerModels[s.id]) loadRouterModels(s.id)">
+                        <summary class="slot-router-summary">⚙ Router Config</summary>
+
+                        <!-- Info grid -->
+                        <div class="slot-router-grid">
+                          <span class="srg-label">Models Dir</span>
+                          <code class="srg-val" x-text="s.router_models_dir || '(not set)'"></code>
+                          <span class="srg-label">Preset</span>
+                          <code class="srg-val" x-text="s.router_models_preset || '(none)'"></code>
+                          <span class="srg-label">Max in VRAM</span>
+                          <span class="srg-val" x-text="(s.router_models_max === 1 ? '1 (hot-swap)' : s.router_models_max + ' simultaneous')"></span>
+                          <span class="srg-label">Autoload</span>
+                          <span class="srg-val" x-text="s.router_models_autoload ? 'yes (registered at start)' : 'no'"></span>
+                        </div>
+
+                        <!-- Default model selector -->
+                        <div class="slot-router-default">
+                          <span class="srg-label" style="margin-bottom:4px;display:block">Default model <span style="color:var(--muted);font-weight:400">(pre-loaded at startup)</span></span>
+
+                          <template x-if="routerModels[s.id] && routerModels[s.id].loading">
+                            <span style="font-size:.7rem;color:var(--muted)">⟳ Loading models…</span>
+                          </template>
+
+                          <template x-if="routerModels[s.id] && !routerModels[s.id].loading">
+                            <div class="slot-router-default-row">
+                              <select class="slot-model-select slot-router-sel"
+                                      x-model="routerModels[s.id].selectedAlias"
+                                      @change="routerModels[s.id].selectedAlias = $event.target.value">
+                                <option value="">-- select --</option>
+                                <template x-for="m in (routerModels[s.id].models || [])" :key="m.alias">
+                                  <option :value="m.alias"
+                                          :selected="m.alias === routerModels[s.id].current_default"
+                                          x-text="m.alias + (m.ctx_size ? '  ctx=' + m.ctx_size : '') + (m.is_default ? '  ★' : '')">
+                                  </option>
+                                </template>
+                              </select>
+                              <button class="btn btn-primary slot-assign-btn"
+                                      @click="setRouterDefault(s.id, routerModels[s.id].selectedAlias || routerModels[s.id].current_default)"
+                                      :disabled="!routerModels[s.id].selectedAlias">
+                                Set Default
+                              </button>
+                              <button class="btn btn-ghost slot-assign-btn"
+                                      @click="loadRouterModels(s.id)"
+                                      title="Refresh model list">↻</button>
+                            </div>
+                          </template>
+
+                          <template x-if="routerModels[s.id] && routerModels[s.id].setMsg">
+                            <div class="slot-router-msg" x-text="routerModels[s.id].setMsg"></div>
+                          </template>
+                          <template x-if="routerModels[s.id] && routerModels[s.id].error">
+                            <div class="slot-router-msg err" x-text="routerModels[s.id].error"></div>
+                          </template>
+                        </div>
+
+                        <div class="slot-router-hint">
+                          Request model: <code>"model": "chat"</code> · <code>"model": "utility"</code> · <code>"model": "embed"</code>
+                        </div>
+                      </details>
+                    </template>
+
+                    <!-- Unified Load Panel (single-model mode only; hidden in router mode) -->
+                    <div class="slot-load-panel" x-show="!swapInProgress[s.id] && !s.router_mode">
                       <div class="slot-load-row">
                         <select class="slot-model-select"
                                 x-model="s.selectedModelId"

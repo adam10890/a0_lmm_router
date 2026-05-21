@@ -71,11 +71,13 @@ The plugin includes a **Model Context Protocol (MCP) server** that exposes route
 2. In the A0 WebUI → **Settings → MCP Servers Configuration JSON**, add:
    ```json
    "lmm-router": {
-     "type": "streamable-http",
-     "url": "http://localhost:8095/mcp"
+     "transport": "streamable-http",
+     "url": "http://host.docker.internal:8095/mcp"
    }
    ```
-   > ⚠️ The key is **`type`**, not `transport`. A0 silently ignores `transport`, falls back to default SSE, and you'll see `400 Bad Request` on `GET /mcp`.
+   > **Note (Docker):** A0 runs inside a container, so use `host.docker.internal` to reach the MCP server on the host. On native Linux use `172.17.0.1` (Docker bridge) or the host's LAN IP instead.
+   >
+   > **Note (A0 version):** Some older A0 builds require `"type"` instead of `"transport"`. If the server shows as SSE instead of Streamable HTTP, switch the key to `"type": "streamable-http"`.
 3. Click **Apply now**. The server appears in the status list with 9 tools.
 
 #### Smoke test from inside the container

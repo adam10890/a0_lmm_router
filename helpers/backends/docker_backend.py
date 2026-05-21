@@ -375,18 +375,6 @@ class DockerBackend(InferenceBackend):
 
     def _build_container_cmd(self, config: Dict[str, Any]) -> List[str]:
         """Build llama-server command line for container execution."""
-        # Model path inside container: /models/<relative_path>
-        model_path = config.get("model_path", "")
-        models_dir = self._get_models_dir()
-
-        # Convert host path to container path
-        if model_path.startswith(models_dir):
-            rel_path = model_path[len(models_dir):].lstrip("/\\")
-        else:
-            # Assume it's already a relative path or filename
-            rel_path = model_path
-        container_model_path = f"{CONTAINER_MODELS_DIR}/{rel_path}"
-
         port = int(config.get("port", 8080))
         ctx_size = int(config.get("context_size", 8192))
         batch_size = int(config.get("batch_size", 512))
@@ -395,7 +383,6 @@ class DockerBackend(InferenceBackend):
         gpu_layers = config.get("gpu_layers", -1)
 
         cmd = [
-            "--model", container_model_path,
             "--ctx-size", str(ctx_size),
             "--batch-size", str(batch_size),
             "--threads", str(threads),
@@ -403,6 +390,36 @@ class DockerBackend(InferenceBackend):
             "--port", str(port),
             "--host", "0.0.0.0",
         ]
+
+        if config.get("router_mode"):
+            # ── Router Mode: directory-based hot-swap ─────────────────
+            rdir = config.get("router_models_dir", "") or CONTAINER_MODELS_DIR
+            cmd.extend(["--models-dir", rdir])
+            if config.get("router_models_autoload", True):
+                cmd.append("--models-autoload")
+            preset = config.get("router_models_preset", "")
+            if preset:
+                cmd.extend(["--models-preset", preset])
+            rmax = int(config.get("router_models_max", 1))
+            if rmax > 0:
+                cmd.extend(["--models-max", str(rmax)])
+            # Pre-load default model to avoid first-request swap latency
+            default_alias = config.get("router_default_model", "")
+            if default_alias and preset:
+                from helpers.llama_cpp_manager import LlamaCppManager  # noqa: PLC0415
+                path = LlamaCppManager._resolve_preset_alias(preset, default_alias, rdir)
+                if path:
+                    cmd.extend(["--model", path])
+        else:
+            # ── Single-model mode (default) ────────────────────────────
+            model_path = config.get("model_path", "")
+            models_dir = self._get_models_dir()
+            if model_path.startswith(models_dir):
+                rel_path = model_path[len(models_dir):].lstrip("/\\")
+            else:
+                rel_path = model_path
+            container_model_path = f"{CONTAINER_MODELS_DIR}/{rel_path}"
+            cmd = ["--model", container_model_path] + cmd
 
         if gpu_layers != 0:
             cmd.extend(["--n-gpu-layers", str(gpu_layers)])

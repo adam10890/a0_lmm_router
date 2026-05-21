@@ -30,6 +30,9 @@
 #   Other valid spec types: draft-simple, draft-eagle3, ngram-simple, ngram-mod
 #   Requires a model with MTP heads for draft-mtp (e.g. DeepSeek V3, Qwen3.6).
 #
+# Native Router Mode flags (replaces --model with directory-based hot-swap):
+#   Use a0-llama-router service below instead of the 3 separate slot services.
+#
 # Requirements:
 #   - Docker Desktop with WSL2 + NVIDIA Container Toolkit
 #   - GGUF models under C:\Users\frant\A0-Data-Permanent\A0_v.adam\models
@@ -168,6 +171,58 @@ services:
       # --- Optional optimization flags (opt-in via .env) ---
       # Disabled temporarily
       # Note: speculative decoding is not applicable to embedding slots
+
+  # -------------------------------------------------
+  # ROUTER MODE slot — single container, all models, hot-swap.
+  #
+  # This replaces a0-llama-chat + a0-llama-utility + a0-llama-embed.
+  # Enable by: commenting out the 3 services above, uncommenting this one,
+  # and setting ROUTER_MODELS_DIR in docker-compose.lmm.env.
+  #
+  # How it works:
+  #   --models-dir   → llama.cpp scans directory and registers each .gguf
+  #   --models-autoload → registers without loading into VRAM immediately
+  #   --models-preset → per-model settings from preset.ini (ctx, temp, etc.)
+  #   --models-max 1  → only 1 model in VRAM; swap on each API request
+  #
+  # API clients request a specific model via:
+  #   { "model": "chat" }      → loads chat model (unloads current if different)
+  #   { "model": "utility" }   → loads utility model
+  #   { "model": "embed" }     → loads embedding model
+  # -------------------------------------------------
+  # a0-llama-router:
+  #   <<: *llama-base
+  #   container_name: a0-llama-router
+  #   ports:
+  #     - "8080:8080"          # single port for all models
+  #   command:
+  #     - "--host"
+  #     - "0.0.0.0"
+  #     - "--port"
+  #     - "8080"
+  #     - "--models-dir"
+  #     - "${ROUTER_MODELS_DIR:-/models}"
+  #     - "--models-autoload"
+  #     - "--models-preset"
+  #     - "${ROUTER_MODELS_PRESET:-/models/preset.ini}"
+  #     - "--models-max"
+  #     - "${ROUTER_MODELS_MAX:-2}"   # 2+ recommended: utility_model called during chat turn
+  #     - "--ctx-size"
+  #     - "${ROUTER_CTX_SIZE:-65536}"
+  #     - "--n-gpu-layers"
+  #     - "${ROUTER_GPU_LAYERS:-999}"
+  #     - "--parallel"
+  #     - "${ROUTER_PARALLEL:-4}"
+  #     - "--batch-size"
+  #     - "${ROUTER_BATCH_SIZE:-512}"
+  #     - "--flash-attn"
+  #     - "${ROUTER_FLASH_ATTN:-on}"
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+  #     interval: 15s
+  #     timeout: 5s
+  #     retries: 20
+  #     start_period: 120s
 
   # -------------------------------------------------
   # VISION slot — multimodal (image+text). Disabled by default.

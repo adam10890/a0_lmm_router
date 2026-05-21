@@ -41,8 +41,10 @@ function createDashboardStore() {
     status:       `${API_BASE}/llamacpp_status`,
     ignite:       `${API_BASE}/lmm_fleet_ignite`,
     hostIgnite:   `${API_BASE}/lmm_host_ignite`,
-    hardwareScan: `${API_BASE}/lmm_hardware_recommend`,
-    slotRecs:     `${API_BASE}/lmm_slot_recommendations`,
+    hardwareScan:     `${API_BASE}/lmm_hardware_recommend`,
+    slotRecs:         `${API_BASE}/lmm_slot_recommendations`,
+    routerModels:     `${API_BASE}/router_models`,
+    setRouterDefault: `${API_BASE}/set_router_default`,
   };
 
   return {
@@ -664,7 +666,53 @@ function createDashboardStore() {
       if (pct > 95) return 'var(--err)';   // won't fit
       if (pct > 80) return 'var(--warn)';  // tight
       return 'var(--ok)';                   // comfortable
+    },
 
+    // ── Router Mode helpers ────────────────────────────────────────
+    // routerModels: { [slot_id]: { models: [], current_default: '', loading, error, setMsg } }
+    routerModels: {},
+
+    async loadRouterModels(slotId) {
+      if (!this.routerModels[slotId]) {
+        this.routerModels = { ...this.routerModels, [slotId]: { models: [], current_default: '', loading: true, error: '', setMsg: '' } };
+      }
+      this.routerModels[slotId].loading = true;
+      this.routerModels[slotId].error   = '';
+      try {
+        const d = await _a0ApiCall(ENDPOINTS.routerModels, { slot_id: slotId });
+        if (d.ok) {
+          this.routerModels[slotId].models          = d.models || [];
+          this.routerModels[slotId].current_default = d.current_default || '';
+        } else {
+          this.routerModels[slotId].error = d.error || 'Failed to load models';
+        }
+      } catch (e) {
+        this.routerModels[slotId].error = 'Connection error';
+      } finally {
+        this.routerModels[slotId].loading = false;
+      }
+    },
+
+    async setRouterDefault(slotId, alias) {
+      if (!alias) return;
+      const state = this.routerModels[slotId];
+      if (state) state.setMsg = '';
+      try {
+        const d = await _a0ApiCall(ENDPOINTS.setRouterDefault, { slot_id: slotId, model_alias: alias });
+        if (d.ok) {
+          if (state) {
+            state.current_default = alias;
+            state.setMsg = `✓ Default set to '${alias}' — restart slot to apply`;
+            state.models.forEach(m => { m.is_default = (m.alias === alias); });
+          }
+          const slot = this.slots.find(s => s.id === slotId);
+          if (slot) slot.router_default_model = alias;
+        } else {
+          if (state) state.setMsg = `✗ ${d.error || 'Failed'}`;
+        }
+      } catch (e) {
+        if (state) state.setMsg = '✗ Connection error';
+      }
     },
   };
 }
