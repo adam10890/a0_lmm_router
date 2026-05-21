@@ -16,12 +16,19 @@
 #   a0_lmm_router launcher inside the A0 container.
 #
 # Optimization flags (all opt-in via .env):
-#   <SLOT>_NO_MMAP=1       → --no-mmap (pin model in RAM)
-#   <SLOT>_MLOCK=1         → --mlock (lock memory, prevent swap)
-#   <SLOT>_CPU_MOE=N       → --n-cpu-moe N (offload N experts to CPU)
-#   <SLOT>_CACHE_TYPE_K=X  → --cache-type-k X (f16|q8_0|q5_0|q4_0)
-#   <SLOT>_CACHE_TYPE_V=X  → --cache-type-v X (f16|q8_0|q5_0|q4_0)
-#   <SLOT>_GPU_LAYERS=N    → --n-gpu-layers N (default: 999)
+#   <SLOT>_NO_MMAP=1           → --no-mmap (pin model in RAM)
+#   <SLOT>_MLOCK=1             → --mlock (lock memory, prevent swap)
+#   <SLOT>_CPU_MOE=N           → --n-cpu-moe N (offload N experts to CPU)
+#   <SLOT>_CACHE_TYPE_K=X      → --cache-type-k X (f16|q8_0|q5_0|q4_0)
+#   <SLOT>_CACHE_TYPE_V=X      → --cache-type-v X (f16|q8_0|q5_0|q4_0)
+#   <SLOT>_GPU_LAYERS=N        → --n-gpu-layers N (default: 999)
+#
+# Speculative decoding / MTP (opt-in via .env):
+#   <SLOT>_SPEC_TYPE=draft-mtp → --spec-type draft-mtp (MTP, no draft model needed)
+#   <SLOT>_SPEC_DRAFT_MAX=2    → --spec-draft-n-max 2 (sweet spot for MTP)
+#   <SLOT>_SPEC_DRAFT_P_MIN=X  → --spec-draft-p-min X (optional probability threshold)
+#   Other valid spec types: draft-simple, draft-eagle3, ngram-simple, ngram-mod
+#   Requires a model with MTP heads for draft-mtp (e.g. DeepSeek V3, Qwen3.6).
 #
 # Requirements:
 #   - Docker Desktop with WSL2 + NVIDIA Container Toolkit
@@ -87,6 +94,13 @@ services:
       - "${CHAT_BATCH_SIZE:-512}"
       - "--flash-attn"
       - "${CHAT_FLASH_ATTN:-on}"
+      # --- Speculative decoding / MTP (opt-in via .env) ---
+      - ${CHAT_SPEC_TYPE:+--spec-type}
+      - ${CHAT_SPEC_TYPE:+${CHAT_SPEC_TYPE}}
+      - ${CHAT_SPEC_DRAFT_MAX:+--spec-draft-n-max}
+      - ${CHAT_SPEC_DRAFT_MAX:+${CHAT_SPEC_DRAFT_MAX}}
+      - ${CHAT_SPEC_DRAFT_P_MIN:+--spec-draft-p-min}
+      - ${CHAT_SPEC_DRAFT_P_MIN:+${CHAT_SPEC_DRAFT_P_MIN}}
       # --- Optional optimization flags (opt-in via .env) ---
       # Disabled temporarily - will be enabled via env vars in future
 
@@ -117,6 +131,13 @@ services:
       - "${UTILITY_BATCH_SIZE:-512}"
       - "--flash-attn"
       - "${UTILITY_FLASH_ATTN:-on}"
+      # --- Speculative decoding / MTP (opt-in via .env) ---
+      - ${UTILITY_SPEC_TYPE:+--spec-type}
+      - ${UTILITY_SPEC_TYPE:+${UTILITY_SPEC_TYPE}}
+      - ${UTILITY_SPEC_DRAFT_MAX:+--spec-draft-n-max}
+      - ${UTILITY_SPEC_DRAFT_MAX:+${UTILITY_SPEC_DRAFT_MAX}}
+      - ${UTILITY_SPEC_DRAFT_P_MIN:+--spec-draft-p-min}
+      - ${UTILITY_SPEC_DRAFT_P_MIN:+${UTILITY_SPEC_DRAFT_P_MIN}}
       # --- Optional optimization flags (opt-in via .env) ---
       # Disabled temporarily
 
@@ -146,6 +167,7 @@ services:
       - "${EMBED_BATCH_SIZE:-512}"
       # --- Optional optimization flags (opt-in via .env) ---
       # Disabled temporarily
+      # Note: speculative decoding is not applicable to embedding slots
 
   # -------------------------------------------------
   # VISION slot — multimodal (image+text). Disabled by default.
@@ -213,6 +235,13 @@ services:
   #     - "${REASONING_BATCH_SIZE:-512}"
   #     - "--flash-attn"
   #     - "${REASONING_FLASH_ATTN:-on}"
+  #     # --- Speculative decoding / MTP (opt-in via .env) ---
+  #     - ${REASONING_SPEC_TYPE:+--spec-type}
+  #     - ${REASONING_SPEC_TYPE:+${REASONING_SPEC_TYPE}}
+  #     - ${REASONING_SPEC_DRAFT_MAX:+--spec-draft-n-max}
+  #     - ${REASONING_SPEC_DRAFT_MAX:+${REASONING_SPEC_DRAFT_MAX}}
+  #     - ${REASONING_SPEC_DRAFT_P_MIN:+--spec-draft-p-min}
+  #     - ${REASONING_SPEC_DRAFT_P_MIN:+${REASONING_SPEC_DRAFT_P_MIN}}
   #     # --- Optional optimization flags ---
   #     - ${REASONING_NO_MMAP:+--no-mmap}
   #     - ${REASONING_MLOCK:+--mlock}

@@ -62,6 +62,21 @@ active_slots:
     embedding_mode: true
     enabled: true
 
+# Example: slot_chat with MTP enabled (requires MTP-capable model).
+# Swap model_id and uncomment spec_type/draft_max to activate.
+#
+#   - id: slot_chat
+#     port: 8080
+#     model_id: qwen36_27b          # Qwen3.6-27B has MTP heads
+#     role: chat
+#     context_size: 65536
+#     gpu_layers: -1
+#     batch_size: 512
+#     flash_attention: on
+#     enabled: true
+#     spec_type: "draft-mtp"        # enable MTP (no extra model needed)
+#     draft_max: 2                  # sweet spot: predict 2 tokens ahead
+
 # -----------------------------------------------------------------
 # Slot defaults applied to every active_slot that doesn't override them
 # -----------------------------------------------------------------
@@ -86,6 +101,22 @@ slot_defaults:
   cpu_moe: null
   cache_type_k: null
   cache_type_v: null
+
+  # ── Speculative decoding / MTP ────────────────────────────────
+  # spec_type: selects the speculative decoding strategy.
+  #   "draft-mtp"    — Multi-Token Prediction: uses MTP heads baked into the
+  #                    model weights. No draft model needed. ~1.9x speedup on
+  #                    compatible models (DeepSeek V3/R1, Qwen3.6+).
+  #   "ngram-simple" — n-gram pattern matching. Works on any model, modest gain.
+  #   "ngram-mod"    — recommended for reasoning/MoE models.
+  #   ""             — disabled (default, safe for all models).
+  # draft_max: --spec-draft-n-max. For MTP, 2 is the sweet spot (default is 3).
+  # draft_min: --spec-draft-n-min. Usually leave at 0.
+  # draft_p_min: --spec-draft-p-min. 0.0 = server default (accept all drafts).
+  spec_type: ""
+  draft_max: 0
+  draft_min: 0
+  draft_p_min: 0.0
 
 # -----------------------------------------------------------------
 # Global settings

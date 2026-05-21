@@ -439,10 +439,39 @@ class DockerBackend(InferenceBackend):
         if mmproj:
             cmd.extend(["--mmproj", f"{CONTAINER_MODELS_DIR}/{mmproj}"])
 
-        # Draft model for speculative decoding
+        # Speculative decoding — spec-type (MTP, ngram, or draft-model-based)
+        # For MTP: set spec_type="draft-mtp" — no draft model needed (heads are in the model).
+        # For draft-simple / draft-eagle3: also set draft_model_path.
+        # For ngram variants: set spec_type only — no model needed.
+        spec_type = config.get("spec_type", "")
+        if spec_type:
+            cmd.extend(["--spec-type", spec_type])
+            # draft_max controls --spec-draft-n-max (sweet spot for MTP is 2)
+            draft_max = int(config.get("draft_max", 0) or 0)
+            if draft_max > 0:
+                cmd.extend(["--spec-draft-n-max", str(draft_max)])
+            draft_min = int(config.get("draft_min", 0) or 0)
+            if draft_min > 0:
+                cmd.extend(["--spec-draft-n-min", str(draft_min)])
+            draft_p_min = float(config.get("draft_p_min", 0.0) or 0.0)
+            if draft_p_min > 0.0:
+                cmd.extend(["--spec-draft-p-min", str(draft_p_min)])
+
+        # External draft model (draft-simple / draft-eagle3 / legacy speculative decoding)
         draft = config.get("draft_model_path", "")
         if draft:
-            cmd.extend(["--model-draft", f"{CONTAINER_MODELS_DIR}/{draft}"])
+            cmd.extend(["--spec-draft-model", f"{CONTAINER_MODELS_DIR}/{draft}"])
+            # Only add tuning flags here if spec_type wasn't already set above
+            if not spec_type:
+                draft_max = int(config.get("draft_max", 0) or 0)
+                if draft_max > 0:
+                    cmd.extend(["--spec-draft-n-max", str(draft_max)])
+                draft_min = int(config.get("draft_min", 0) or 0)
+                if draft_min > 0:
+                    cmd.extend(["--spec-draft-n-min", str(draft_min)])
+                draft_p_min = float(config.get("draft_p_min", 0.0) or 0.0)
+                if draft_p_min > 0.0:
+                    cmd.extend(["--spec-draft-p-min", str(draft_p_min)])
 
         # ── Optimization flags (opt-in, all default off) ─────────────
         # NOTE: active backend is "remote" (compose-managed containers).
