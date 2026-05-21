@@ -253,6 +253,17 @@ class SubprocessBackend(InferenceBackend):
             rmax = int(config.get("router_models_max", 1))
             if rmax > 0:
                 cmd.extend(["--models-max", str(rmax)])
+            # Pre-load default model (set via dashboard)
+            default_alias = config.get("router_default_model", "")
+            if default_alias and preset:
+                from helpers.llama_cpp_manager import LlamaCppManager  # noqa: PLC0415
+                path = LlamaCppManager._resolve_preset_alias(
+                    preset if not use_wsl else self._convert_wsl_path(preset),
+                    default_alias,
+                    rdir,
+                )
+                if path:
+                    cmd.extend(["--model", path])
         else:
             # ── Single-model mode (default) ────────────────────────────
             model_path = config.get("model_path", "")

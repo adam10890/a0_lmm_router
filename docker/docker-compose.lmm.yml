@@ -206,7 +206,7 @@ services:
   #     - "--models-preset"
   #     - "${ROUTER_MODELS_PRESET:-/models/preset.ini}"
   #     - "--models-max"
-  #     - "${ROUTER_MODELS_MAX:-1}"
+  #     - "${ROUTER_MODELS_MAX:-2}"   # 2+ recommended: utility_model called during chat turn
   #     - "--ctx-size"
   #     - "${ROUTER_CTX_SIZE:-65536}"
   #     - "--n-gpu-layers"

@@ -135,6 +135,9 @@ class ServerConfig:
     router_models_autoload: bool = True  # pass --models-autoload at startup
     router_models_preset: str = ""    # path to .ini preset file
     router_models_max: int = 1        # 1 = hot-swap; >1 = keep N models in VRAM
+    # Default model alias (from preset.ini) to pre-load on startup via --model.
+    # Set from the dashboard; persisted in conf/router_state.json.
+    router_default_model: str = ""
 
 
 @dataclass
@@ -463,6 +466,21 @@ class LlamaCppManager:
             path = f"/mnt/{drive}{path[2:]}"
         return path
     
+    @staticmethod
+    def _resolve_preset_alias(preset_path: str, alias: str, models_dir: str) -> str:
+        """Return the full model path for an alias in a .ini preset file."""
+        import configparser  # noqa: PLC0415
+        if not preset_path or not os.path.exists(preset_path):
+            return ""
+        cp = configparser.ConfigParser()
+        cp.read(preset_path, encoding="utf-8")
+        for section in cp.sections():
+            a = cp.get(section, "alias", fallback=section)
+            if a == alias:
+                rel = cp.get(section, "model", fallback="")
+                return os.path.join(models_dir, rel) if (models_dir and rel) else rel
+        return ""
+
     def _build_server_command(self, config: ServerConfig) -> List[str]:
         """Build command line arguments for llama.cpp server (b8047+ compatible)."""
         use_wsl = self.global_config.get('use_wsl', False)
@@ -494,6 +512,15 @@ class LlamaCppManager:
                 cmd.extend(['--models-preset', preset])
             if config.router_models_max > 0:
                 cmd.extend(['--models-max', str(config.router_models_max)])
+            # Pre-load the default model so first request has zero swap latency
+            if config.router_default_model and config.router_models_preset:
+                default_path = self._resolve_preset_alias(
+                    config.router_models_preset, config.router_default_model, models_dir
+                )
+                if default_path:
+                    if use_wsl:
+                        default_path = self._convert_path_to_wsl(default_path)
+                    cmd.extend(['--model', default_path])
         else:
             # ── Single-model mode (default) ────────────────────────────
             model_path = config.model_path
@@ -882,7 +909,29 @@ class BackendManager:
             slot_config = dict(slot)
             slot_config['model_path'] = model_path
             self._slot_configs[name] = slot_config
-    
+
+        # Overlay persistent router state (set via dashboard)
+        self._apply_router_state()
+
+    def _apply_router_state(self) -> None:
+        """Overlay conf/router_state.json onto _slot_configs (non-destructive)."""
+        import json  # noqa: PLC0415
+        for candidate in [
+            "/a0/conf/router_state.json",
+            os.path.join(os.path.dirname(self.config_path), "router_state.json"),
+        ]:
+            if os.path.exists(candidate):
+                try:
+                    with open(candidate, encoding="utf-8") as f:
+                        state = json.load(f)
+                    for slot_id, overrides in state.items():
+                        if slot_id in self._slot_configs:
+                            self._slot_configs[slot_id].update(overrides)
+                    self.logger.info(f"Router state loaded from {candidate}")
+                except Exception as exc:
+                    self.logger.warning(f"Could not load router_state.json: {exc}")
+                break
+
     def _load_model_cards(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """Load model cards for model_id → path resolution."""
         cards = {}

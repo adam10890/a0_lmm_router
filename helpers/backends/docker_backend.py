@@ -393,8 +393,6 @@ class DockerBackend(InferenceBackend):
 
         if config.get("router_mode"):
             # ── Router Mode: directory-based hot-swap ─────────────────
-            # The container mounts the host models dir at CONTAINER_MODELS_DIR.
-            # Use that path (or a custom router_models_dir) for --models-dir.
             rdir = config.get("router_models_dir", "") or CONTAINER_MODELS_DIR
             cmd.extend(["--models-dir", rdir])
             if config.get("router_models_autoload", True):
@@ -405,6 +403,13 @@ class DockerBackend(InferenceBackend):
             rmax = int(config.get("router_models_max", 1))
             if rmax > 0:
                 cmd.extend(["--models-max", str(rmax)])
+            # Pre-load default model to avoid first-request swap latency
+            default_alias = config.get("router_default_model", "")
+            if default_alias and preset:
+                from helpers.llama_cpp_manager import LlamaCppManager  # noqa: PLC0415
+                path = LlamaCppManager._resolve_preset_alias(preset, default_alias, rdir)
+                if path:
+                    cmd.extend(["--model", path])
         else:
             # ── Single-model mode (default) ────────────────────────────
             model_path = config.get("model_path", "")
