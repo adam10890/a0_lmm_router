@@ -289,7 +289,11 @@ def _query_slots() -> List[SlotInfo]:
                 if port_text.isdigit():
                     probe_port = int(port_text)
             running, healthy = _probe_slot(host_only, probe_port)
-            model_id = str(slot.get("model_id") or slot.get("specialty") or "")
+
+            # Try to get the REAL model_id from the container's /v1/models endpoint.
+            # Falls back to config value if the container is unreachable.
+            config_model_id = str(slot.get("model_id") or slot.get("specialty") or "")
+            model_id = _query_container_model_id(host_only, probe_port, config_model_id)
 
             slots.append(SlotInfo(
                 id=sid,
@@ -302,6 +306,35 @@ def _query_slots() -> List[SlotInfo]:
     except Exception as exc:
         logger.debug("Slot query skipped: %s", exc)
     return slots
+
+
+def _query_container_model_id(host: str, port: int, fallback: str) -> str:
+    """Query the llama.cpp container's /v1/models to get the real model ID.
+
+    Returns the model filename stem from the API, or fallback if unreachable.
+    """
+    if not port:
+        return fallback
+    try:
+        import urllib.request
+        url = f"http://{host}:{port}/v1/models"
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=2.0) as resp:  # noqa: S310
+            if 200 <= resp.status < 300:
+                data = json.loads(resp.read().decode("utf-8"))
+                models = data.get("data", []) if isinstance(data, dict) else []
+                if models:
+                    first = models[0]
+                    model_id = first.get("id", "")
+                    if model_id:
+                        # Strip path prefix and .gguf suffix for clean display
+                        model_id = model_id.replace(".gguf", "")
+                        if "/" in model_id:
+                            model_id = model_id.rsplit("/", 1)[-1]
+                        return model_id
+    except Exception:
+        pass
+    return fallback
 
 
 # ---------------------------------------------------------------------------

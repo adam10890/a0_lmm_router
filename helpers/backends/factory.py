@@ -29,8 +29,18 @@ def detect_backend(global_config: Dict[str, Any] | None = None) -> BackendType:
         logger.info("lmm_hosts configured — using remote backend")
         return BackendType.REMOTE
 
-    logger.info("No lmm_hosts configured — using remote backend with explicit slot hosts")
-    return BackendType.REMOTE
+    # Check Docker availability
+    try:
+        from .docker_backend import is_docker_available
+        if is_docker_available():
+            logger.info("Docker available — using docker backend")
+            return BackendType.DOCKER
+    except Exception:
+        pass
+
+    # Fallback to subprocess
+    logger.info("No Docker or lmm_hosts — using subprocess backend")
+    return BackendType.SUBPROCESS
 
 
 def create_backend(
@@ -58,18 +68,10 @@ def create_backend(
         elif backend_type == "docker":
             backend_type = BackendType.DOCKER
         elif backend_type == "subprocess":
-            if global_config.get("allow_subprocess_backend", False):
-                backend_type = BackendType.SUBPROCESS
-            else:
-                logger.warning("subprocess backend is disabled; using remote backend")
-                backend_type = BackendType.REMOTE
+            backend_type = BackendType.SUBPROCESS
         else:
             logger.warning(f"Unknown backend '{backend_type}', falling back to auto")
             backend_type = detect_backend(global_config)
-
-    if backend_type == BackendType.SUBPROCESS and not global_config.get("allow_subprocess_backend", False):
-        logger.warning("subprocess backend is disabled; using remote backend")
-        backend_type = BackendType.REMOTE
 
     # Create backend
     if backend_type == BackendType.REMOTE:

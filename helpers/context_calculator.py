@@ -252,6 +252,50 @@ def calculate_kv_cache_size(
     return total_bytes / (1024**3)
 
 
+def estimate_vram_detailed(model_path: str, ctx_size: int) -> dict:
+    """
+    Calculate detailed VRAM breakdown for a model at a given context size.
+
+    Returns dict with:
+        weights_gb: VRAM for model weights (file size * 1.05)
+        kv_cache_gb: VRAM for KV cache
+        activation_gb: VRAM for activations (estimated)
+        overhead_gb: Framework overhead (0.5 GB)
+        total_gb: Total VRAM needed
+    """
+    metadata = read_gguf_metadata(model_path)
+    file_size_gb = metadata.get("file_size_gb", 0)
+    n_layer = metadata.get("n_layer")
+    n_embd = metadata.get("n_embd")
+
+    # Weights: file size * 1.05 (minimal overhead for loading)
+    weights_gb = file_size_gb * 1.05
+
+    # KV cache
+    if n_layer and n_embd:
+        kv_cache_gb = calculate_kv_cache_size(ctx_size, n_layer, n_embd)
+    else:
+        # Rough estimate: 0.5 GB per 8K context per 10GB model
+        kv_cache_gb = (ctx_size / 8192) * (file_size_gb / 10) * 0.5
+
+    # Activation memory (estimate based on model size and context)
+    # Rough formula: 0.3 GB per 8K context per 10GB model
+    activation_gb = (ctx_size / 8192) * (file_size_gb / 10) * 0.3
+
+    # Framework overhead (llama.cpp runtime, CUDA context, etc.)
+    overhead_gb = 0.5
+
+    total_gb = weights_gb + kv_cache_gb + activation_gb + overhead_gb
+
+    return {
+        "weights_gb": round(weights_gb, 2),
+        "kv_cache_gb": round(kv_cache_gb, 2),
+        "activation_gb": round(activation_gb, 2),
+        "overhead_gb": overhead_gb,
+        "total_gb": round(total_gb, 2),
+    }
+
+
 def calculate_optimal_context(
     model_path: str,
     slot: str,
@@ -273,6 +317,8 @@ def calculate_optimal_context(
             n_ctx_train: int - max context from model metadata
             vram_for_kv: float - VRAM needed for KV cache
             vram_for_weights: float - VRAM for model weights
+            vram_for_activation: float - VRAM for activations
+            vram_overhead: float - Framework overhead
             total_vram_needed: float - total VRAM needed
             reasoning: str - explanation of the calculation
     """
@@ -282,12 +328,14 @@ def calculate_optimal_context(
     n_layer = metadata.get("n_layer")
     n_embd = metadata.get("n_embd")
 
-    # Estimate VRAM for weights (file size * 1.15 for overhead)
-    vram_for_weights = file_size_gb * 1.15
+    # Estimate VRAM for weights using detailed breakdown
+    vram_detailed = estimate_vram_detailed(model_path, 8192)  # Use 8K as baseline
+    vram_for_weights = vram_detailed["weights_gb"]
+    vram_overhead = vram_detailed["overhead_gb"]
 
     # VRAM available for this slot (total - other slots - safety margin)
     vram_for_slot = available_vram_gb - other_slots_vram_gb - _VRAM_SAFETY_MARGIN_GB
-    if vram_for_slot < vram_for_weights:
+    if vram_for_slot < vram_for_weights + vram_overhead:
         # Not enough VRAM even for weights - use minimum required context
         min_ctx = _MIN_CTX_SIZES.get(slot, 8192)
         return {
@@ -295,19 +343,27 @@ def calculate_optimal_context(
             "n_ctx_train": n_ctx_train,
             "vram_for_kv": 0.0,
             "vram_for_weights": vram_for_weights,
-            "total_vram_needed": vram_for_weights,
-            "reasoning": f"Insufficient VRAM: {vram_for_slot:.1f}GB available, {vram_for_weights:.1f}GB needed for weights. Using minimum context {min_ctx} for role '{slot}'.",
+            "vram_for_activation": 0.0,
+            "vram_overhead": vram_overhead,
+            "total_vram_needed": vram_for_weights + vram_overhead,
+            "reasoning": f"Insufficient VRAM: {vram_for_slot:.1f}GB available, {vram_for_weights + vram_overhead:.1f}GB needed for weights+overhead. Using minimum context {min_ctx} for role '{slot}'.",
         }
 
-    # VRAM available for KV cache
-    vram_for_kv = vram_for_slot - vram_for_weights
+    # VRAM available for KV cache and activation
+    vram_for_kv_and_activation = vram_for_slot - vram_for_weights - vram_overhead
 
     # If we have n_layer and n_embd, calculate max context from VRAM
-    if n_layer and n_embd and vram_for_kv > 0:
-        # Solve for ctx_size: ctx_size = vram_for_kv * 1024^3 / (2 * n_layer * n_embd * bytes_per_token)
+    if n_layer and n_embd and vram_for_kv_and_activation > 0:
+        # Solve for ctx_size accounting for both KV cache and activation
+        # KV cache: ctx_size * 2 * n_layer * n_embd * bytes_per_token
+        # Activation: ctx_size * (file_size_gb / 10) * 0.3 / 8192 * 1024^3
+        # Combined: ctx_size * (2 * n_layer * n_embd * 2 + activation_factor)
+        
         bytes_per_token = 2  # FP16 KV cache
+        activation_factor = (file_size_gb / 10) * 0.3 / 8192 * (1024**3)  # bytes per token
+        
         max_ctx_from_vram = int(
-            (vram_for_kv * (1024**3)) / (2 * n_layer * n_embd * bytes_per_token)
+            (vram_for_kv_and_activation * (1024**3)) / (2 * n_layer * n_embd * bytes_per_token + activation_factor)
         )
 
         # Round down to power of 2 multiple for efficiency
@@ -351,20 +407,16 @@ def calculate_optimal_context(
             f"Using {recommended_ctx} tokens."
         )
 
-    # Calculate actual KV cache size for recommended context
-    if n_layer and n_embd:
-        actual_kv_size = calculate_kv_cache_size(recommended_ctx, n_layer, n_embd)
-    else:
-        # Rough estimate: 0.5 GB per 8K context per 10GB model
-        actual_kv_size = (recommended_ctx / 8192) * (file_size_gb / 10) * 0.5
-
-    total_vram_needed = vram_for_weights + actual_kv_size
+    # Calculate actual VRAM breakdown for recommended context
+    actual_vram = estimate_vram_detailed(model_path, recommended_ctx)
 
     return {
         "recommended_ctx": recommended_ctx,
         "n_ctx_train": n_ctx_train,
-        "vram_for_kv": actual_kv_size,
-        "vram_for_weights": vram_for_weights,
-        "total_vram_needed": total_vram_needed,
+        "vram_for_kv": actual_vram["kv_cache_gb"],
+        "vram_for_weights": actual_vram["weights_gb"],
+        "vram_for_activation": actual_vram["activation_gb"],
+        "vram_overhead": actual_vram["overhead_gb"],
+        "total_vram_needed": actual_vram["total_gb"],
         "reasoning": reasoning,
     }

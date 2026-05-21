@@ -29,7 +29,10 @@ from helpers.api import ApiHandler
 
 DEFAULT_PORT = 55501
 TOKEN_CANDIDATES = ("/a0/tmp/lmm_host_token", "/host/a0_lmm_host.key")
-ACTIONS = {"ignite", "extinguish", "status", "run-bat", "health"}
+ACTIONS = {"ignite", "extinguish", "status", "run-bat", "health", "start_slot", "stop_slot"}
+
+# Actions that map to /models/* endpoints on the host helper
+_MODEL_ACTIONS = {"start_slot": "models/start", "stop_slot": "models/stop"}
 
 
 def _resolve_token() -> str:
@@ -86,7 +89,11 @@ class LmmHostIgnite(ApiHandler):
             }
 
         base = _resolve_host_url()
-        url = f"{base}/{action}"
+        # Route model actions to /models/* endpoints
+        if action in _MODEL_ACTIONS:
+            url = f"{base}/{_MODEL_ACTIONS[action]}"
+        else:
+            url = f"{base}/{action}"
 
         # Cheap preflight: fail fast with a friendly message when the helper
         # is not running at all.
@@ -108,8 +115,12 @@ class LmmHostIgnite(ApiHandler):
                 "Content-Type": "application/json",
                 "X-Token": token,
             }
+            # Build request body — pass slot for start_slot/stop_slot
+            req_body = {}
+            if action in ("start_slot", "stop_slot"):
+                req_body["slot"] = str(input.get("slot", "")).strip()
             async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-                async with session.post(url, data=json.dumps({})) as resp:
+                async with session.post(url, data=json.dumps(req_body)) as resp:
                     text = await resp.text()
                     try:
                         payload = json.loads(text)

@@ -35,7 +35,6 @@ function createDashboardStore() {
     install:      `${API_BASE}/lmm_model_install`,
     listModels:   `${API_BASE}/llamacpp_list_models`,
     assignModel:  `${API_BASE}/assign_model`,
-    loadModel:    `${API_BASE}/load_model`,
     jobStatus:    `${API_BASE}/job_status`,
     control:      `${API_BASE}/llamacpp_control`,
     status:       `${API_BASE}/llamacpp_status`,
@@ -61,6 +60,7 @@ function createDashboardStore() {
     error: '',
     lastUpdated: null,
     swapInProgress: {},       // keyed by slot_id — true when assigning/restarting
+    slotErrors: {},            // keyed by slot_id — error message from last assign/load
 
     // Fleet ignition state
     igniteState: 'idle',      // idle | pending | ok | needs_host | error
@@ -187,7 +187,23 @@ function createDashboardStore() {
         if (d.ok) {
           this.gpus = d.gpus || [];
           this.cpu = d.cpu || this.cpu;
-          this.slots = d.slots || [];
+          // Merge fresh slot data into existing slots so UI-only
+          // properties (selectedModelId, _ctxSlider, _ctxOverride)
+          // survive poll refreshes.
+          const fresh = d.slots || [];
+          const oldMap = {};
+          for (const s of (this.slots || [])) {
+            oldMap[s.id] = s;
+          }
+          this.slots = fresh.map(s => {
+            const old = oldMap[s.id];
+            if (old) {
+              if (old.selectedModelId !== undefined) s.selectedModelId = old.selectedModelId;
+              if (old._ctxSlider !== undefined) s._ctxSlider = old._ctxSlider;
+              if (old._ctxOverride !== undefined) s._ctxOverride = old._ctxOverride;
+            }
+            return s;
+          });
           this.lastUpdated = new Date();
           this.error = '';
         } else {
@@ -342,10 +358,38 @@ function createDashboardStore() {
     },
 
     async controlSlot(op, serverId) {
+      // Map slot id → role for host helper calls
+      const roleMap = {
+        slot_chat: 'chat', slot_utility: 'utility', slot_embedding: 'embedding',
+        slot_embed: 'embedding', slot_vision: 'vision', slot_reasoning: 'reasoning',
+      };
+      const role = roleMap[serverId] || serverId;
+
       try {
-        await _a0ApiCall(ENDPOINTS.control, { data: { operation: op, server: serverId } });
+        if (op === 'start') {
+          // Use host helper to actually start the container via docker compose
+          const d = await _a0ApiCall(ENDPOINTS.hostIgnite, { action: 'start_slot', slot: role });
+          if (!d.ok) {
+            this.slotErrors[serverId] = d.error || 'Start failed';
+          } else {
+            this.slotErrors[serverId] = '';
+          }
+        } else if (op === 'stop') {
+          // Use host helper to actually stop the container via docker compose
+          const d = await _a0ApiCall(ENDPOINTS.hostIgnite, { action: 'stop_slot', slot: role });
+          if (!d.ok) {
+            this.slotErrors[serverId] = d.error || 'Stop failed';
+          } else {
+            this.slotErrors[serverId] = '';
+          }
+        } else if (op === 'start_all' || op === 'stop_all') {
+          // Fall back to BackendManager for bulk operations
+          await _a0ApiCall(ENDPOINTS.control, { data: { operation: op, server: serverId } });
+        }
         await this._fetchStats();
-      } catch (_) { /* silent */ }
+      } catch (e) {
+        this.slotErrors[serverId] = e.message || 'Connection failed';
+      }
     },
 
     async installModel(rec) {
@@ -445,20 +489,25 @@ function createDashboardStore() {
 
     async assignModelToSlot(slotId, modelId) {
       this.swapInProgress[slotId] = true;
+      this.slotErrors[slotId] = '';
       try {
         const d = await _a0ApiCall(ENDPOINTS.assignModel, { slot: slotId, model_id: modelId, apply_now: true });
         if (d.ok) {
+          this.slotErrors[slotId] = '';
           // Wait a bit for container restart, then refresh
           setTimeout(() => this._fetchStats(), 5000);
           return { ok: true, restarted: d.restarted };
         } else {
+          this.slotErrors[slotId] = d.error || 'Assignment failed';
           return { ok: false, error: d.error || 'Assignment failed' };
         }
       } catch (e) {
-        return { ok: false, error: e.message || 'Connection failed' };
+        const msg = e.message || 'Connection failed';
+        this.slotErrors[slotId] = msg;
+        return { ok: false, error: msg };
       } finally {
-        // Keep spinner for a few seconds to show it's restarting
-        setTimeout(() => { this.swapInProgress[slotId] = false; }, 3000);
+        // Keep spinner until stats refresh completes
+        setTimeout(() => { this.swapInProgress[slotId] = false; }, 5000);
       }
     },
 
@@ -485,41 +534,6 @@ function createDashboardStore() {
         if (id === slotModelId) return id;
       }
       return null;
-    },
-
-    canLoadModel(modelId) {
-      // Check VRAM constraints - don't load if this model + existing > free VRAM
-      const model = this.installedModels[modelId];
-      if (!model) return { ok: false, reason: 'Model not found' };
-
-      // Get currently loaded (running) model sizes
-      const runningSlots = this.slots.filter(s => s.running);
-      let usedVramGB = 0;
-      for (const s of runningSlots) {
-        const mid = this.getSlotCurrentModelId(s);
-        if (mid && this.installedModels[mid]) {
-          usedVramGB += this.installedModels[mid].size_gb;
-        }
-      }
-
-      // Check against first GPU (assuming single GPU for now)
-      const gpu = this.gpus[0];
-      if (!gpu) return { ok: true }; // No GPU, can't check
-
-      const freeVramGB = gpu.free_vram_mb / 1024;
-      const safetyMargin = 2; // GB
-      const required = model.size_gb + safetyMargin;
-
-      if (usedVramGB + required > (gpu.total_vram_mb / 1024)) {
-        return {
-          ok: false,
-          reason: `Not enough VRAM. Model needs ~${model.size_gb} GB, but only ~${freeVramGB.toFixed(1)} GB free with safety margin.`,
-          usedVramGB,
-          freeVramGB,
-          required,
-        };
-      }
-      return { ok: true };
     },
 
     // ── computed helpers ───────────────────────────────────────
@@ -612,28 +626,22 @@ function createDashboardStore() {
       };
     },
 
-    // ── Load model (combined flow) ────────────────────────────
-    async loadModelToSlot(slotId, modelId, ctxSize) {
-      this.swapInProgress[slotId] = true;
-      try {
-        const body = { slot: slotId, model_id: modelId };
-        if (ctxSize) body.ctx_size = parseInt(ctxSize);
-        const d = await _a0ApiCall(ENDPOINTS.loadModel, body);
-        if (d.ok) {
-          setTimeout(() => this._fetchStats(), 3000);
-          return { ok: true, context: d.context };
-        } else {
-          return { ok: false, error: d.error || 'Load failed' };
-        }
-      } catch (e) {
-        return { ok: false, error: e.message || 'Connection failed' };
-      } finally {
-        setTimeout(() => { this.swapInProgress[slotId] = false; }, 3000);
-      }
+    // ── Context slider helpers ────────────────────────────────
+    /**
+     * Get minimum allowed context window for a slot role.
+     * These are hard limits based on llama_cpp_servers.yaml configuration.
+     */
+    getMinContextForRole(role) {
+      const MIN_CTX = {
+        chat: 65536,
+        utility: 16384,
+        embedding: 4096,
+        vision: 8192,
+        reasoning: 32768,
+      };
+      return MIN_CTX[role] || 2048;
     },
 
-
-    // ── Context slider helpers ────────────────────────────────
     /**
      * Estimate KV cache VRAM in GB for a given context size.
      * Formula matches context_calculator.py: ctx × 2 × n_layer × n_embd × bytes_per_token

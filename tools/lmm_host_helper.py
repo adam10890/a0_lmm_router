@@ -197,6 +197,18 @@ def _scan_models_dir(models_dir: str) -> dict:
     if not base.exists():
         return models
 
+    # Import benchmark fetcher
+    try:
+        import sys
+        plugin_dir = Path(__file__).parent.parent
+        if str(plugin_dir) not in sys.path:
+            sys.path.insert(0, str(plugin_dir))
+        from helpers.benchmark_fetcher import get_benchmark_data
+        benchmark_available = True
+    except Exception as e:
+        print(f"[WARNING] Benchmark fetcher not available: {e}")
+        benchmark_available = False
+
     for path in base.rglob("*.gguf"):
         rel = path.relative_to(base).as_posix()
         parts = rel.split("/")
@@ -218,6 +230,16 @@ def _scan_models_dir(models_dir: str) -> dict:
             except Exception as e:
                 print(f"[WARNING] Failed to read GGUF metadata for {path.name}: {e}")
 
+        # Fetch benchmark data if available
+        benchmark_data = {}
+        if benchmark_available:
+            try:
+                # Try to match model name to benchmark data
+                # Use filename as hint, also try repo_id if known
+                benchmark_data = get_benchmark_data(model_id)
+            except Exception as e:
+                print(f"[WARNING] Failed to fetch benchmark data for {model_id}: {e}")
+
         models[model_id] = {
             "file": path.name,
             "path": str(Path(rel).parent) if len(parts) > 1 else "",
@@ -229,6 +251,12 @@ def _scan_models_dir(models_dir: str) -> dict:
             "n_ctx_train": gguf_metadata.get("n_ctx_train"),
             "n_layer": gguf_metadata.get("n_layer"),
             "n_embd": gguf_metadata.get("n_embd"),
+            # Benchmark data
+            "benchmark_score": benchmark_data.get("score", 0),
+            "benchmark_sources": benchmark_data.get("sources", []),
+            "benchmark_date": benchmark_data.get("date", ""),
+            "benchmark_confidence": benchmark_data.get("confidence", "unknown"),
+            "task_profiles": benchmark_data.get("task_profiles", []),
         }
     return models
 
@@ -464,7 +492,31 @@ def _get_models_dir_from_env(env_path: Path) -> str:
         for line in env_path.read_text(encoding="utf-8").splitlines():
             if line.startswith("LLAMA_MODELS_DIR="):
                 return line.split("=", 1)[1].strip()
-    # Fallback: derive from common patterns
+    # Fallback: check env var
+    fallback = os.environ.get("LLAMA_MODELS_DIR", "")
+    if fallback:
+        return fallback
+    # Last resort: parse docker-compose.yml for default value
+    compose_path = env_path.with_suffix(".yml") if env_path.suffix == ".env" else env_path.parent / "docker-compose.lmm.yml"
+    if compose_path.exists():
+        try:
+            import yaml
+            with open(compose_path, "r", encoding="utf-8") as f:
+                compose_data = yaml.safe_load(f)
+                # Extract from volume mount in x-llama-base
+                llama_base = compose_data.get("x-llama-base", {})
+                volumes = llama_base.get("volumes", [])
+                for vol in volumes:
+                    if isinstance(vol, dict) and vol.get("target") == "/models":
+                        source = vol.get("source", "")
+                        # Parse ${VAR:-default} syntax
+                        if source.startswith("${") and ":-" in source:
+                            default = source.split(":-", 1)[1].rstrip("}")
+                            return default
+                        return source
+        except Exception:
+            pass
+    # Ultimate fallback: use the known default from docker-compose
     return "C:/Users/frant/A0-Data-Permanent/A0_v.adam/models"
 
 
@@ -1030,7 +1082,7 @@ class Handler(BaseHTTPRequestHandler):
 
             # Build model path: /models/{path}/{file}
             model_file = model.get("file", "")
-            model_path = model.get("path", "")
+            model_path = str(model.get("path", "")).replace("\\", "/")
             full_model_path = f"/models/{model_path}/{model_file}" if model_path else f"/models/{model_file}"
 
             # Calculate optimal context size if context calculator is available
@@ -1102,6 +1154,46 @@ class Handler(BaseHTTPRequestHandler):
                 response_data["context_calculation"] = ctx_calc_result
 
             self._send_json(200, response_data)
+
+        elif parsed.path == "/models/start":
+            slot = body.get("slot", "").strip()
+            if not slot:
+                self._send_json(400, {"ok": False, "error": "slot is required"})
+                return
+            service_map = {
+                "chat": "a0-llama-chat",
+                "utility": "a0-llama-utility",
+                "embedding": "a0-llama-embed",
+                "embed": "a0-llama-embed",
+                "vision": "a0-llama-vision",
+                "reasoning": "a0-llama-reasoning",
+            }
+            service = service_map.get(slot.lower())
+            if not service:
+                self._send_json(400, {"ok": False, "error": f"unknown slot '{slot}'"})
+                return
+            result = _run_docker_compose(self.server.compose_path, "up", "-d", service)
+            self._send_json(200, {"ok": result.get("ok", False), "slot": slot, "service": service, "output": result.get("stdout", "")})
+
+        elif parsed.path == "/models/stop":
+            slot = body.get("slot", "").strip()
+            if not slot:
+                self._send_json(400, {"ok": False, "error": "slot is required"})
+                return
+            service_map = {
+                "chat": "a0-llama-chat",
+                "utility": "a0-llama-utility",
+                "embedding": "a0-llama-embed",
+                "embed": "a0-llama-embed",
+                "vision": "a0-llama-vision",
+                "reasoning": "a0-llama-reasoning",
+            }
+            service = service_map.get(slot.lower())
+            if not service:
+                self._send_json(400, {"ok": False, "error": f"unknown slot '{slot}'"})
+                return
+            result = _run_docker_compose(self.server.compose_path, "stop", service)
+            self._send_json(200, {"ok": result.get("ok", False), "slot": slot, "service": service, "output": result.get("stdout", "")})
 
         elif parsed.path == "/models/delete":
             model_id = body.get("model_id", "").strip()

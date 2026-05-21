@@ -167,10 +167,13 @@
                 </div>
                 <div style="font-size:10px;color:#8b949e" x-text="m.role || 'unassigned'"></div>
               </div>
-              <span class="model-size" x-text="m.size_gb ? m.size_gb + ' GB' : ''"></span>
+              <div style="display:flex;align-items:center;gap:8px">
+                <span class="model-size" x-text="m.size_gb ? m.size_gb + ' GB' : ''"></span>
+                <span x-show="m.benchmark_score" class="lmm-badge" :style="'font-size:9px;padding:2px 6px;background:' + (m.benchmark_score >= 80 ? '#39d35320;color:#39d353;border:1px solid #39d35340' : m.benchmark_score >= 60 ? '#e3b34120;color:#e3b341;border:1px solid #e3b34140' : '#f8514920;color:#f85149;border:1px solid #f8514940')" x-text="m.benchmark_score + (m.benchmark_confidence && m.benchmark_confidence !== 'direct' ? (m.benchmark_confidence === 'variant' ? '~' : m.benchmark_confidence === 'unknown' ? '?' : '!sr') : '')"></span>
+              </div>
               <div style="display:flex;gap:6px;margin-left:8px">
-                <button class="lmm-btn lmm-btn-blue" style="padding:4px 8px;font-size:10px" @click="assignModel(m.id)" x-disabled="m.pending_assignment">Assign</button>
-                <button class="lmm-btn lmm-btn-red" style="padding:4px 8px;font-size:10px" @click="deleteModel(m.id)" x-disabled="m.pending_assignment">Delete</button>
+                <button class="lmm-btn lmm-btn-blue" style="padding:4px 8px;font-size:10px" @click="assignModel(m.id)" :disabled="m.pending_assignment">Assign</button>
+                <button class="lmm-btn lmm-btn-red" style="padding:4px 8px;font-size:10px" @click="deleteModel(m.id)" :disabled="m.pending_assignment">Delete</button>
               </div>
             </div>
           </template>
@@ -238,7 +241,7 @@
                 <option value="">No role</option>
                 <option value="chat">Chat</option>
                 <option value="utility">Utility</option>
-                <option value="embed">Embedding</option>
+                <option value="embedding">Embedding</option>
               </select>
             </div>
             <div style="display:flex;gap:8px;justify-content:flex-end">
@@ -466,7 +469,7 @@ function lmmConfig() {
     },
 
     async assignModel(modelId) {
-      const slot = prompt('Assign to slot (chat/utility/embed):');
+      const slot = prompt('Assign to slot (chat/utility/embedding):');
       if (!slot) return;
       this.actionMsg = { text: 'Assigning model...', type: 'info' };
       try {

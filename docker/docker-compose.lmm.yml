@@ -76,6 +76,8 @@ services:
   a0-llama-chat:
     <<: *llama-base
     container_name: a0-llama-chat
+    env_file:
+      - docker-compose.lmm.env
     ports:
       - "8080:8080"
     command:
@@ -113,6 +115,8 @@ services:
   a0-llama-utility:
     <<: *llama-base
     container_name: a0-llama-utility
+    env_file:
+      - docker-compose.lmm.env
     ports:
       - "8088:8080"
     command:
@@ -142,7 +146,7 @@ services:
       - ${UTILITY_SPEC_DRAFT_P_MIN:+--spec-draft-p-min}
       - ${UTILITY_SPEC_DRAFT_P_MIN:+${UTILITY_SPEC_DRAFT_P_MIN}}
       # --- Optional optimization flags (opt-in via .env) ---
-      # Disabled temporarily
+      # For MTP (Qwen3.5): use docker-compose.lmm.mtp.yml override
 
   # -------------------------------------------------
   # EMBEDDING slot — dedicated embeddings endpoint
@@ -150,6 +154,8 @@ services:
   a0-llama-embed:
     <<: *llama-base
     container_name: a0-llama-embed
+    env_file:
+      - docker-compose.lmm.env
     ports:
       - "8082:8080"
     command:

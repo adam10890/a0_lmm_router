@@ -617,7 +617,7 @@
                                 @change="s.selectedModelId = $event.target.value">
                           <option value="">-- Select model --</option>
                           <template x-for="opt in getSlotModelOptions(s.role)" :key="opt.id">
-                            <option :value="opt.id" x-text="opt.label" :selected="opt.id === getSlotCurrentModelId(s)"></option>
+                            <option :value="opt.id" x-text="opt.label"></option>
                           </template>
                         </select>
                         <input type="number" class="slot-ctx-input"
@@ -626,7 +626,7 @@
                                min="2048" step="2048"
                                title="Context window override (leave empty for auto-calculation)"/>
                         <button class="btn btn-primary slot-assign-btn"
-                                @click="const mid = s.selectedModelId || getSlotCurrentModelId(s); if (mid) assignModelToSlot(s.id, mid)"
+                                @click="const mid = s.selectedModelId || getSlotCurrentModelId(s); if (mid) assignModelToSlot(s.role, mid)"
                                 :disabled="!s.selectedModelId || s.selectedModelId === getSlotCurrentModelId(s)"
                                 title="Load model into this slot with auto-calculated context">
                           ⚡ Load
@@ -644,19 +644,23 @@
                                 x-text="((s._ctxSlider || 8192) / 1024).toFixed(0) + 'K tokens'"></span>
                         </div>
                         <input type="range" class="ctx-slider"
-                               min="2048" :max="(installedModels[s.selectedModelId || getSlotCurrentModelId(s)]?.n_ctx_train || 131072)" step="2048"
-                               :value="s._ctxSlider || 8192"
+                               :min="getMinContextForRole(s.role)" :max="(installedModels[s.selectedModelId || getSlotCurrentModelId(s)]?.n_ctx_train || 131072)" step="2048"
+                               :value="s._ctxSlider || getMinContextForRole(s.role)"
                                @input="s._ctxSlider = parseInt($event.target.value)"
-                               :style="'--slider-color:' + ctxVramColor(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || 8192)"/>
+                               :style="'--slider-color:' + ctxVramColor(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || getMinContextForRole(s.role))"/>
                         <div class="ctx-slider-footer">
-                          <span class="ctx-slider-min">2K</span>
+                          <span class="ctx-slider-min" x-text="(getMinContextForRole(s.role) / 1024).toFixed(0) + 'K'"></span>
                           <span class="ctx-slider-est"
-                                :style="'color:' + ctxVramColor(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || 8192)"
-                                x-text="'KV cache: ~' + estimateKVCacheGB(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || 8192).toFixed(1) + ' GB'"></span>
+                                :style="'color:' + ctxVramColor(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || getMinContextForRole(s.role))"
+                                x-text="'KV cache: ~' + estimateKVCacheGB(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || getMinContextForRole(s.role)).toFixed(1) + ' GB'"></span>
                           <span class="ctx-slider-max" x-text="((installedModels[s.selectedModelId || getSlotCurrentModelId(s)]?.n_ctx_train || 131072) / 1024).toFixed(0) + 'K'"></span>
                         </div>
                       </div>
                     </template>
+
+                    <!-- Slot error message -->
+                    <div class="lmm-msg err" style="margin-top:4px; font-size:.68rem"
+                         x-show="slotErrors[s.id]" x-text="slotErrors[s.id]"></div>
 
                     <!-- Swap in progress indicator -->
                     <div class="slot-swap-spinner" x-show="swapInProgress[s.id]">
@@ -698,7 +702,7 @@
                         <div class="ssr-actions">
                           <template x-if="sug.source === 'installed'">
                             <button class="btn btn-confirm slot-assign-btn"
-                                    @click="assignModelToSlot(s.id, sug.model_id)"
+                                    @click="assignModelToSlot(s.role, sug.model_id)"
                                     :disabled="swapInProgress[s.id]"
                                     x-text="'Assign ' + sug.model_id">
                             </button>
