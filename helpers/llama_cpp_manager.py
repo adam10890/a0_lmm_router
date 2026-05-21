@@ -100,10 +100,14 @@ class ServerConfig:
     mmproj_path: str = ""  # Vision projector path
     
     # Speculative decoding (Phase F)
+    # draft-mtp: uses MTP heads baked into the model (no separate draft model).
+    # draft-simple / draft-eagle3: require a separate draft model via draft_model_path.
+    # ngram-*: no model needed, works on any model.
+    spec_type: str = ""          # --spec-type: "draft-mtp" | "draft-simple" | "ngram-simple" | etc.
     draft_model_path: str = ""
-    draft_max: int = 0
-    draft_min: int = 0
-    draft_p_min: float = 0.75
+    draft_max: int = 0           # --spec-draft-n-max (0 = use server default of 3)
+    draft_min: int = 0           # --spec-draft-n-min
+    draft_p_min: float = 0.0     # --spec-draft-p-min (server default is 0.0)
     
     # TTS (Phase H)
     vocoder_path: str = ""
@@ -235,10 +239,11 @@ class LlamaCppManager:
                     kv_unified=slot.get('kv_unified', slot_defaults.get('kv_unified', False)),
                     cache_ram_mib=slot.get('cache_ram_mib', slot_defaults.get('cache_ram_mib', 0)),
                     mmproj_path=slot.get('mmproj_path', slot_defaults.get('mmproj_path', '')),
+                    spec_type=slot.get('spec_type', slot_defaults.get('spec_type', '')),
                     draft_model_path=slot.get('draft_model_path', slot_defaults.get('draft_model_path', '')),
                     draft_max=slot.get('draft_max', slot_defaults.get('draft_max', 0)),
                     draft_min=slot.get('draft_min', slot_defaults.get('draft_min', 0)),
-                    draft_p_min=slot.get('draft_p_min', slot_defaults.get('draft_p_min', 0.75)),
+                    draft_p_min=slot.get('draft_p_min', slot_defaults.get('draft_p_min', 0.0)),
                     vocoder_path=slot.get('vocoder_path', slot_defaults.get('vocoder_path', '')),
                     tts_use_guide_tokens=slot.get('tts_use_guide_tokens', slot_defaults.get('tts_use_guide_tokens', False)),
                     lora_path=slot.get('lora_path', slot_defaults.get('lora_path', '')),
@@ -300,10 +305,11 @@ class LlamaCppManager:
                 kv_unified=server_conf.get('kv_unified', False),
                 cache_ram_mib=server_conf.get('cache_ram_mib', 0),
                 mmproj_path=server_conf.get('mmproj_path', ''),
+                spec_type=server_conf.get('spec_type', ''),
                 draft_model_path=server_conf.get('draft_model_path', ''),
                 draft_max=server_conf.get('draft_max', 0),
                 draft_min=server_conf.get('draft_min', 0),
-                draft_p_min=server_conf.get('draft_p_min', 0.75),
+                draft_p_min=server_conf.get('draft_p_min', 0.0),
                 vocoder_path=server_conf.get('vocoder_path', ''),
                 tts_use_guide_tokens=server_conf.get('tts_use_guide_tokens', False),
                 lora_path=server_conf.get('lora_path', ''),

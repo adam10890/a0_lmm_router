@@ -5,6 +5,7 @@ Calculates optimal context window size based on:
 1. Model's max context from GGUF metadata (n_ctx_train)
 2. Available VRAM (dynamic calculation)
 3. Model size (smaller model = larger context)
+4. Runtime token budget from external sources (pen_paper, wiki)
 
 KV cache formula: ctx_size * 2 * n_layer * n_embd * bytes_per_token
 """
@@ -12,8 +13,9 @@ from __future__ import annotations
 
 import logging
 import struct
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 log = logging.getLogger("a0_lmm_router.context_calculator")
 
@@ -38,6 +40,89 @@ _DEFAULT_CTX_SIZES = {
 
 # Safety margin for VRAM (GB)
 _VRAM_SAFETY_MARGIN_GB = 2.0
+
+# Context size buckets for ephemeral containers (powers of 2)
+CONTEXT_SIZE_BUCKETS: List[int] = [8192, 16384, 32768, 65536, 131072]
+
+
+@dataclass
+class ExternalTokenBudget:
+    """Runtime token budget from all sources injected into a conversation's context.
+
+    Used to size ephemeral containers and ensure the context window is large
+    enough to hold everything the LLM needs to see.
+
+    Token estimation notes:
+    - Hebrew/mixed-language content: ~3 chars per token (denser than English ~4)
+    - Wiki pages: truncated to 4000 chars each ≈ 1333 tokens each
+    - Pen & paper workspaces: JSON entries, estimate conservatively
+    """
+
+    pen_paper: int = 0        # tokens from pen_paper workspace reads
+    wiki: int = 0             # tokens from wiki_query results
+    history: int = 0          # rolling chat history tokens
+    system: int = 0           # system prompt tokens (set once per conversation)
+    reserve_response: int = 2048  # headroom reserved for model output
+
+    @property
+    def total(self) -> int:
+        return self.pen_paper + self.wiki + self.history + self.system + self.reserve_response
+
+    def __repr__(self) -> str:
+        return (
+            f"ExternalTokenBudget("
+            f"pp={self.pen_paper}, wiki={self.wiki}, hist={self.history}, "
+            f"sys={self.system}, reserve={self.reserve_response}, "
+            f"total={self.total})"
+        )
+
+
+def estimate_tokens(text: str) -> int:
+    """Conservative token estimate for mixed Hebrew/English content.
+
+    Uses len//3 rather than the typical len//4 for English-only text
+    because Hebrew characters are multi-byte in UTF-8 and tokenize at
+    a higher ratio (~2-3 chars per token vs ~4 for English).
+    """
+    if not text:
+        return 0
+    return max(1, len(text) // 3)
+
+
+def bucket_context_size(required: int, buckets: Optional[List[int]] = None) -> int:
+    """Return the smallest bucket that is >= required tokens."""
+    bucket_list = sorted(buckets or CONTEXT_SIZE_BUCKETS)
+    for b in bucket_list:
+        if b >= required:
+            return b
+    return bucket_list[-1]
+
+
+def recommend_context_for_budget(
+    budget: ExternalTokenBudget,
+    model_n_ctx_train: int = 131072,
+    buckets: Optional[List[int]] = None,
+) -> int:
+    """Return the recommended (bucketed) context window for a given token budget.
+
+    Args:
+        budget: Accumulated token counts from all runtime sources.
+        model_n_ctx_train: The model's hard training-context ceiling.
+        buckets: Context size buckets to snap to. Defaults to CONTEXT_SIZE_BUCKETS.
+
+    Returns:
+        Recommended context window size, snapped up to the next bucket and
+        clamped to [min_bucket, model_n_ctx_train].
+    """
+    required = budget.total
+    bucketed = bucket_context_size(required, buckets)
+    clamped = min(bucketed, model_n_ctx_train)
+    log.debug(
+        f"recommend_context_for_budget: required={required} "
+        f"→ bucket={bucketed} → clamped={clamped} "
+        f"(model_max={model_n_ctx_train})"
+    )
+    return clamped
 
 
 def read_gguf_metadata(model_path: str) -> dict:

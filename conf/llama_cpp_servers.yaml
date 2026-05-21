@@ -62,6 +62,21 @@ active_slots:
     embedding_mode: true
     enabled: true
 
+# Example: slot_chat with MTP enabled (requires MTP-capable model).
+# Swap model_id and uncomment spec_type/draft_max to activate.
+#
+#   - id: slot_chat
+#     port: 8080
+#     model_id: qwen36_27b          # Qwen3.6-27B has MTP heads
+#     role: chat
+#     context_size: 65536
+#     gpu_layers: -1
+#     batch_size: 512
+#     flash_attention: on
+#     enabled: true
+#     spec_type: "draft-mtp"        # enable MTP (no extra model needed)
+#     draft_max: 2                  # sweet spot: predict 2 tokens ahead
+
 # -----------------------------------------------------------------
 # Slot defaults applied to every active_slot that doesn't override them
 # -----------------------------------------------------------------
@@ -86,6 +101,22 @@ slot_defaults:
   cpu_moe: null
   cache_type_k: null
   cache_type_v: null
+
+  # ── Speculative decoding / MTP ────────────────────────────────
+  # spec_type: selects the speculative decoding strategy.
+  #   "draft-mtp"    — Multi-Token Prediction: uses MTP heads baked into the
+  #                    model weights. No draft model needed. ~1.9x speedup on
+  #                    compatible models (DeepSeek V3/R1, Qwen3.6+).
+  #   "ngram-simple" — n-gram pattern matching. Works on any model, modest gain.
+  #   "ngram-mod"    — recommended for reasoning/MoE models.
+  #   ""             — disabled (default, safe for all models).
+  # draft_max: --spec-draft-n-max. For MTP, 2 is the sweet spot (default is 3).
+  # draft_min: --spec-draft-n-min. Usually leave at 0.
+  # draft_p_min: --spec-draft-p-min. 0.0 = server default (accept all drafts).
+  spec_type: ""
+  draft_max: 0
+  draft_min: 0
+  draft_p_min: 0.0
 
 # -----------------------------------------------------------------
 # Global settings
@@ -159,6 +190,40 @@ hardware:
     max_concurrent_gpu_models: 3
     max_concurrent_cpu_models: 1
     max_total_models: 4
+
+# -----------------------------------------------------------------
+# Ephemeral per-conversation containers
+#
+# When enabled, each conversation gets its own dedicated llama.cpp container
+# with a context window sized to the conversation's runtime token budget
+# (chat history + pen_paper workspace + wiki pages retrieved).
+#
+# Mental model: just as each LLM forward pass re-reads all context tokens
+# from scratch, and each terminal session is a fresh process — each
+# conversation gets a fresh, isolated container instance.
+#
+# Context size buckets let the warm pool pre-load containers at common
+# sizes to eliminate cold-start latency. On acquire, the required context
+# is snapped up to the next bucket; a pre-warmed container is handed off
+# instantly and a replacement is replenished asynchronously.
+#
+# Port range 9100-9200 is reserved for ephemeral containers, separate from
+# shared slots (chat:8080, utility:8088, embedding:8082).
+# -----------------------------------------------------------------
+ephemeral:
+  enabled: false                           # set true to activate
+  model_id: null                           # null = inherit from slot_chat model
+  warm_pool_size: 2                        # pre-loaded containers per bucket
+  max_concurrent_conversations: 10         # hard cap on simultaneous active convs
+  ttl_hours: 24                            # destroy idle containers after N hours
+  context_size_buckets:                    # snap required ctx up to next bucket
+    - 8192
+    - 16384
+    - 32768
+    - 65536
+    - 131072
+  port_range_start: 9100
+  port_range_end: 9200
 
 # -----------------------------------------------------------------
 # MCP Server (Streamable HTTP — MCP spec 2025-06-18)

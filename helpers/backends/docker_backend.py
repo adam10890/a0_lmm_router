@@ -221,6 +221,132 @@ class DockerBackend(InferenceBackend):
 
         return dict(self._slots)
 
+    async def start_ephemeral_slot(
+        self, name: str, config: Dict[str, Any]
+    ) -> SlotStatus:
+        """Start a one-time ephemeral container for a single conversation.
+
+        Identical to start_slot but uses the ephemeral label set so the pool
+        and cleanup_stale_ephemerals can identify these containers separately
+        from long-lived shared slots.
+        """
+        if name in self._containers:
+            existing = self._containers[name]
+            existing.reload()
+            if existing.status == "running":
+                return self._slots[name]
+            await self._remove_container(name)
+
+        port = int(config.get("port", 9100))
+        gpu_layers = config.get("gpu_layers", -1)
+        use_gpu = gpu_layers != 0
+        image = self._get_image(use_gpu)
+        cmd = self._build_container_cmd(config)
+        models_dir = self._get_models_dir()
+
+        self.logger.info(
+            f"Starting ephemeral slot '{name}' — ctx={config.get('context_size')}, "
+            f"port={port}, gpu={'yes' if use_gpu else 'no'}"
+        )
+
+        status = SlotStatus(
+            name=name,
+            port=port,
+            host="localhost",
+            model_id=config.get("model_id", ""),
+        )
+
+        try:
+            volumes = {models_dir: {"bind": CONTAINER_MODELS_DIR, "mode": "ro"}}
+            device_requests = []
+            if use_gpu:
+                gpu_count = self.global_config.get("gpu_count", "all")
+                if gpu_count == "all":
+                    device_requests = [
+                        _docker.types.DeviceRequest(count=-1, capabilities=[["gpu"]])
+                    ]
+                else:
+                    device_requests = [
+                        _docker.types.DeviceRequest(
+                            count=int(gpu_count), capabilities=[["gpu"]]
+                        )
+                    ]
+
+            container = self._client.containers.run(
+                image,
+                command=cmd,
+                name=name,
+                detach=True,
+                ports={f"{port}/tcp": port},
+                volumes=volumes,
+                device_requests=device_requests if device_requests else None,
+                network=self._get_network_name(),
+                environment=self._build_env(config),
+                labels={
+                    "a0.lmm.slot": name,
+                    "a0.lmm.managed": "true",
+                    "a0.lmm.ephemeral": "true",
+                },
+            )
+
+            self._containers[name] = container
+            status.container_id = container.id[:12]
+
+            timeout = self._get_startup_timeout()
+            if await self._wait_healthy(port, timeout):
+                status.running = True
+                status.healthy = True
+                self.logger.info(f"Ephemeral slot '{name}' ready on port {port}")
+            else:
+                status.error = "Container started but health check timed out"
+
+        except Exception as e:
+            status.error = str(e)
+            self.logger.error(f"Failed to start ephemeral slot '{name}': {e}")
+
+        self._slots[name] = status
+        return status
+
+    async def stop_ephemeral_slot(self, name: str) -> bool:
+        """Stop and remove an ephemeral container by name."""
+        return await self._remove_container(name)
+
+    async def cleanup_stale_ephemerals(self, ttl_hours: float = 24.0) -> int:
+        """Find ephemeral containers older than ttl_hours and destroy them.
+
+        Useful as a periodic background task to reclaim VRAM from abandoned
+        conversations (e.g. after agent crash or client disconnect).
+        """
+        import datetime
+
+        destroyed = 0
+        try:
+            containers = self._client.containers.list(
+                all=True,
+                filters={"label": "a0.lmm.ephemeral=true"},
+            )
+            cutoff = datetime.datetime.utcnow() - datetime.timedelta(hours=ttl_hours)
+            for c in containers:
+                created_str = c.attrs.get("Created", "")
+                try:
+                    created = datetime.datetime.fromisoformat(
+                        created_str.replace("Z", "+00:00")
+                    ).replace(tzinfo=None)
+                    if created < cutoff:
+                        name = c.name
+                        c.stop(timeout=5)
+                        c.remove(force=True)
+                        self._containers.pop(name, None)
+                        self._slots.pop(name, None)
+                        self.logger.info(f"Removed stale ephemeral container: {name}")
+                        destroyed += 1
+                except Exception:
+                    pass
+        except Exception as e:
+            self.logger.warning(f"cleanup_stale_ephemerals error: {e}")
+
+        return destroyed
+
     async def cleanup(self) -> None:
         """Stop all managed containers."""
         names = list(self._containers.keys())
@@ -313,10 +439,39 @@ class DockerBackend(InferenceBackend):
         if mmproj:
             cmd.extend(["--mmproj", f"{CONTAINER_MODELS_DIR}/{mmproj}"])
 
-        # Draft model for speculative decoding
+        # Speculative decoding — spec-type (MTP, ngram, or draft-model-based)
+        # For MTP: set spec_type="draft-mtp" — no draft model needed (heads are in the model).
+        # For draft-simple / draft-eagle3: also set draft_model_path.
+        # For ngram variants: set spec_type only — no model needed.
+        spec_type = config.get("spec_type", "")
+        if spec_type:
+            cmd.extend(["--spec-type", spec_type])
+            # draft_max controls --spec-draft-n-max (sweet spot for MTP is 2)
+            draft_max = int(config.get("draft_max", 0) or 0)
+            if draft_max > 0:
+                cmd.extend(["--spec-draft-n-max", str(draft_max)])
+            draft_min = int(config.get("draft_min", 0) or 0)
+            if draft_min > 0:
+                cmd.extend(["--spec-draft-n-min", str(draft_min)])
+            draft_p_min = float(config.get("draft_p_min", 0.0) or 0.0)
+            if draft_p_min > 0.0:
+                cmd.extend(["--spec-draft-p-min", str(draft_p_min)])
+
+        # External draft model (draft-simple / draft-eagle3 / legacy speculative decoding)
         draft = config.get("draft_model_path", "")
         if draft:
-            cmd.extend(["--model-draft", f"{CONTAINER_MODELS_DIR}/{draft}"])
+            cmd.extend(["--spec-draft-model", f"{CONTAINER_MODELS_DIR}/{draft}"])
+            # Only add tuning flags here if spec_type wasn't already set above
+            if not spec_type:
+                draft_max = int(config.get("draft_max", 0) or 0)
+                if draft_max > 0:
+                    cmd.extend(["--spec-draft-n-max", str(draft_max)])
+                draft_min = int(config.get("draft_min", 0) or 0)
+                if draft_min > 0:
+                    cmd.extend(["--spec-draft-n-min", str(draft_min)])
+                draft_p_min = float(config.get("draft_p_min", 0.0) or 0.0)
+                if draft_p_min > 0.0:
+                    cmd.extend(["--spec-draft-p-min", str(draft_p_min)])
 
         # ── Optimization flags (opt-in, all default off) ─────────────
         # NOTE: active backend is "remote" (compose-managed containers).
