@@ -161,6 +161,40 @@ hardware:
     max_total_models: 4
 
 # -----------------------------------------------------------------
+# Ephemeral per-conversation containers
+#
+# When enabled, each conversation gets its own dedicated llama.cpp container
+# with a context window sized to the conversation's runtime token budget
+# (chat history + pen_paper workspace + wiki pages retrieved).
+#
+# Mental model: just as each LLM forward pass re-reads all context tokens
+# from scratch, and each terminal session is a fresh process — each
+# conversation gets a fresh, isolated container instance.
+#
+# Context size buckets let the warm pool pre-load containers at common
+# sizes to eliminate cold-start latency. On acquire, the required context
+# is snapped up to the next bucket; a pre-warmed container is handed off
+# instantly and a replacement is replenished asynchronously.
+#
+# Port range 9100-9200 is reserved for ephemeral containers, separate from
+# shared slots (chat:8080, utility:8088, embedding:8082).
+# -----------------------------------------------------------------
+ephemeral:
+  enabled: false                           # set true to activate
+  model_id: null                           # null = inherit from slot_chat model
+  warm_pool_size: 2                        # pre-loaded containers per bucket
+  max_concurrent_conversations: 10         # hard cap on simultaneous active convs
+  ttl_hours: 24                            # destroy idle containers after N hours
+  context_size_buckets:                    # snap required ctx up to next bucket
+    - 8192
+    - 16384
+    - 32768
+    - 65536
+    - 131072
+  port_range_start: 9100
+  port_range_end: 9200
+
+# -----------------------------------------------------------------
 # MCP Server (Streamable HTTP — MCP spec 2025-06-18)
 # Clients connect to:  http://<host>:<port>/mcp
 # -----------------------------------------------------------------
