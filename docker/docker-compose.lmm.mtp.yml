@@ -1,14 +1,28 @@
 # docker-compose.lmm.mtp.yml — MTP override for llama.cpp fleet
 #
-# Enables Multi-Token Prediction on the UTILITY slot (Qwen3.5).
-# MTP uses the model's own prediction heads to generate multiple tokens
-# per step — roughly 1.3-1.5x faster with no quality loss.
+# Enables Multi-Token Prediction (MTP) speculative decoding on the UTILITY
+# slot. MTP uses prediction heads baked into the model weights to generate
+# multiple tokens per forward pass — ~1.85x decode speedup per the PR
+# benchmark (RTX 3090: 22.97 → 42.45 tok/s, ~70-75% draft accept rate).
+# NOTE: prompt processing is slightly slower (device-to-host embedding xfer).
 #
-# SUPPORTED models: Qwen3.5, DeepSeek V3/R1, GLM4
-# NOT supported:    Gemma, Mistral, Phi, LFM, SuperGemma
+# Canonical reference: https://github.com/ggml-org/llama.cpp/pull/22673
+# (merged 2026-05-16, commit 10829dbcce69eb4ac5bfea6c649eeb5f60b5d7c3)
 #
-# IMPORTANT: Requires llama.cpp image built AFTER May 16, 2026
-#            (post-b8047, PR #22673)
+# SUPPORTED models per the PR:
+#   - Qwen3.6-27B
+#   - Qwen3.6-35BA3B (MoE)
+#   - Other models with embedded MTP weights (DeepSeek V3/R1)
+# NOT supported: Qwen3.5, Gemma, Mistral, Phi, LFM, SuperGemma
+#
+# IMPORTANT: Requires a llama.cpp build that includes PR #22673.
+# The published `ghcr.io/ggml-org/llama.cpp:server-cuda` image as of
+# 2026-05-21 does NOT yet contain it — running this override against
+# that image will crash the slot with
+#   error while handling argument "--spec-type": unknown speculative
+#   decoding type without draft model
+# Build a custom image from llama.cpp master (post-10829dbc) until the
+# ghcr image is rebuilt.
 #
 # Usage (instead of plain up):
 #   docker compose \
@@ -22,7 +36,8 @@ name: a0-lmm
 
 services:
   a0-llama-utility:
-    # Append --spec-type mtp to the existing command
+    # Replace the base command with one that includes --spec-type draft-mtp
+    # (per PR #22673). Override compose merges by replacing the command list.
     command:
       - "--host"
       - "0.0.0.0"
@@ -41,5 +56,9 @@ services:
       - "--batch-size"
       - "${UTILITY_BATCH_SIZE:-512}"
       - "--flash-attn"
+      - "on"
+      # MTP per PR #22673 — see https://github.com/ggml-org/llama.cpp/pull/22673
       - "--spec-type"
-      - "mtp"
+      - "draft-mtp"
+      - "--spec-draft-n-max"
+      - "${UTILITY_SPEC_DRAFT_N_MAX:-2}"

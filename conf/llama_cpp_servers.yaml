@@ -61,7 +61,9 @@ active_slots:
     embedding_mode: true
     enabled: true
 
-# Example: slot_chat with MTP enabled (requires MTP-capable model).
+# Example: slot_chat with MTP enabled per PR #22673
+# https://github.com/ggml-org/llama.cpp/pull/22673
+# Requires an MTP-capable model (Qwen3.6-27B / Qwen3.6-35BA3B / DeepSeek V3/R1).
 # Swap model_id and uncomment spec_type/draft_max to activate.
 #
 #   - id: slot_chat
@@ -96,16 +98,24 @@ slot_defaults:
   cache_type_v: null
 
   # ── Speculative decoding / MTP ────────────────────────────────
+  # Reference: https://github.com/ggml-org/llama.cpp/pull/22673
+  # (merged 2026-05-16, commit 10829dbc)
+  #
   # spec_type: selects the speculative decoding strategy.
-  #   "draft-mtp"    — Multi-Token Prediction: uses MTP heads baked into the
-  #                    model weights. No draft model needed. ~1.9x speedup on
-  #                    compatible models (DeepSeek V3/R1, Qwen3.6+).
+  #   "draft-mtp"    — Multi-Token Prediction (PR #22673). Uses MTP heads
+  #                    baked into the model weights. No draft model needed.
+  #                    ~1.85x decode speedup on supported models per the PR
+  #                    benchmark. REQUIRES: Qwen3.6-27B, Qwen3.6-35BA3B-MoE,
+  #                    or DeepSeek V3/R1 (any GGUF with embedded MTP weights).
+  #                    NOT supported on Qwen3.5, Gemma, Mistral, Phi.
   #   "ngram-simple" — n-gram pattern matching. Works on any model, modest gain.
   #   "ngram-mod"    — recommended for reasoning/MoE models.
   #   ""             — disabled (default, safe for all models).
-  # draft_max: --spec-draft-n-max. For MTP, 2 is the sweet spot (default is 3).
+  # draft_max: --spec-draft-n-max. For MTP, 2 is the sweet spot per the PR.
   # draft_min: --spec-draft-n-min. Usually leave at 0.
   # draft_p_min: --spec-draft-p-min. 0.0 = server default (accept all drafts).
+  # NOTE: draft-mtp requires a llama.cpp build containing PR #22673; the
+  # published ghcr.io/ggml-org/llama.cpp:server-cuda may not yet have it.
   spec_type: ""
   draft_max: 0
   draft_min: 0

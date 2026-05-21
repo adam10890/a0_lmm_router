@@ -23,12 +23,16 @@
 #   <SLOT>_CACHE_TYPE_V=X      → --cache-type-v X (f16|q8_0|q5_0|q4_0)
 #   <SLOT>_GPU_LAYERS=N        → --n-gpu-layers N (default: 999)
 #
-# Speculative decoding / MTP (opt-in via .env):
-#   <SLOT>_SPEC_TYPE=draft-mtp → --spec-type draft-mtp (MTP, no draft model needed)
-#   <SLOT>_SPEC_DRAFT_MAX=2    → --spec-draft-n-max 2 (sweet spot for MTP)
-#   <SLOT>_SPEC_DRAFT_P_MIN=X  → --spec-draft-p-min X (optional probability threshold)
+# Speculative decoding / MTP per PR #22673:
+#   https://github.com/ggml-org/llama.cpp/pull/22673
+#   <SLOT>_SPEC_TYPE=draft-mtp     → --spec-type draft-mtp (MTP, no draft model needed)
+#   <SLOT>_SPEC_DRAFT_N_MAX=2      → --spec-draft-n-max 2 (sweet spot per PR)
 #   Other valid spec types: draft-simple, draft-eagle3, ngram-simple, ngram-mod
-#   Requires a model with MTP heads for draft-mtp (e.g. DeepSeek V3, Qwen3.6).
+#   draft-mtp requires a model with embedded MTP weights:
+#     Qwen3.6-27B, Qwen3.6-35BA3B-MoE, DeepSeek V3/R1.
+#   Activation is via docker-compose.lmm.mtp.yml override (not via this
+#   file directly) — the conditional `${VAR:+...}` pattern would pass
+#   empty argv items to llama-server when MTP is off.
 #
 # Native Router Mode flags (replaces --model with directory-based hot-swap):
 #   Use a0-llama-router service below instead of the 3 separate slot services.
@@ -99,15 +103,11 @@ services:
       - "${CHAT_BATCH_SIZE:-512}"
       - "--flash-attn"
       - "${CHAT_FLASH_ATTN:-on}"
-      # --- Speculative decoding / MTP (opt-in via .env) ---
-      - ${CHAT_SPEC_TYPE:+--spec-type}
-      - ${CHAT_SPEC_TYPE:+${CHAT_SPEC_TYPE}}
-      - ${CHAT_SPEC_DRAFT_MAX:+--spec-draft-n-max}
-      - ${CHAT_SPEC_DRAFT_MAX:+${CHAT_SPEC_DRAFT_MAX}}
-      - ${CHAT_SPEC_DRAFT_P_MIN:+--spec-draft-p-min}
-      - ${CHAT_SPEC_DRAFT_P_MIN:+${CHAT_SPEC_DRAFT_P_MIN}}
-      # --- Optional optimization flags (opt-in via .env) ---
-      # Disabled temporarily - will be enabled via env vars in future
+      # NOTE: speculative decoding / MTP / optional optimization flags are
+      # handled by override compose files (e.g. docker-compose.lmm.mtp.yml).
+      # Empty `${VAR:+...}` conditionals are NOT used here because docker
+      # compose passes the resulting empty string as a real argv item,
+      # which llama-server rejects with "invalid argument:".
 
   # -------------------------------------------------
   # UTILITY slot — secondary model for sub-agents, wiki ops, tool calling
@@ -138,15 +138,9 @@ services:
       - "${UTILITY_BATCH_SIZE:-512}"
       - "--flash-attn"
       - "${UTILITY_FLASH_ATTN:-on}"
-      # --- Speculative decoding / MTP (opt-in via .env) ---
-      - ${UTILITY_SPEC_TYPE:+--spec-type}
-      - ${UTILITY_SPEC_TYPE:+${UTILITY_SPEC_TYPE}}
-      - ${UTILITY_SPEC_DRAFT_MAX:+--spec-draft-n-max}
-      - ${UTILITY_SPEC_DRAFT_MAX:+${UTILITY_SPEC_DRAFT_MAX}}
-      - ${UTILITY_SPEC_DRAFT_P_MIN:+--spec-draft-p-min}
-      - ${UTILITY_SPEC_DRAFT_P_MIN:+${UTILITY_SPEC_DRAFT_P_MIN}}
-      # --- Optional optimization flags (opt-in via .env) ---
-      # For MTP (Qwen3.5): use docker-compose.lmm.mtp.yml override
+      # NOTE: speculative decoding / MTP / optional optimization flags are
+      # handled by override compose files (e.g. docker-compose.lmm.mtp.yml).
+      # See the CHAT block above for the rationale.
 
   # -------------------------------------------------
   # EMBEDDING slot — dedicated embeddings endpoint
