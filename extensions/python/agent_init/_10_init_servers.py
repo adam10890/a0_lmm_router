@@ -1,9 +1,8 @@
 """llama.cpp Server Initialization Extension.
 
-Runs on every `Agent.__init__` (agent_init extension point). The extension
-point is invoked synchronously, so this handler MUST be a sync `execute`.
-The actual start-up work is async, so we schedule it once per container
-lifetime via `DeferredTask`.
+Runs on every `Agent.__init__` (agent_init extension point).
+The actual start-up work is deferred via DeferredTask so agent construction
+is never blocked.
 
 Placement: extensions/python/agent_init/_10_init_servers.py
 """
@@ -24,7 +23,7 @@ _IGNITED = False
 class LlamaCppInitExtension(Extension):
     """Kick off llama.cpp fleet startup the first time an agent is created."""
 
-    def execute(self, **kwargs) -> None:  # SYNC — agent_init is called sync
+    async def execute(self, **kwargs) -> None:
         global _IGNITED
         if _IGNITED:
             return

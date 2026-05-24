@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class RateLimitRetryExtension(Extension):
     """Patches LLM calls to add retry logic for rate limits."""
 
-    def execute(self, **kwargs) -> None:
+    async def execute(self, **kwargs) -> None:
         """Apply rate limit retry patches."""
         try:
             # Import and apply patches from the helper module
