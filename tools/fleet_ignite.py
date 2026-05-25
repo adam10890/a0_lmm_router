@@ -28,7 +28,7 @@ from helpers.tool import Tool, Response
 
 
 DEFAULT_PORT = 55501
-TOKEN_CANDIDATES = ("/a0/tmp/lmm_host_token", "/host/a0_lmm_host.key")
+TOKEN_CANDIDATES = ("/host/a0_lmm_host.key", "/a0/tmp/lmm_host_token")
 SUPPORTED_ACTIONS = ("ignite", "extinguish", "status", "run-bat", "health")
 
 

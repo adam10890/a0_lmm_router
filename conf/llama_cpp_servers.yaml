@@ -1,32 +1,14 @@
 active_slots:
 
   # ──────────────────────────────────────────────────────────────
-  # ROUTER MODE EXAMPLE (commented out — enables hot-swap for all roles)
-  # This single slot replaces the three fixed slots below.
+  # ROUTER MODE — single llama.cpp container with model hot-swap.
+  # This matches docker-compose.lmm.router.yml / a0-llama-router.
   # One container, all models loaded on demand.
   # ──────────────────────────────────────────────────────────────
-  # - id: slot_router
-  #   port: 8080
-  #   role: chat           # default role; clients override via "model" param
-  #   context_size: 65536
-  #   gpu_layers: -1
-  #   batch_size: 512
-  #   threads: 8
-  #   parallel_slots: 1
-  #   flash_attention: on
-  #   enabled: true
-  #   # --- Router Mode ---
-  #   router_mode: true
-  #   router_models_dir: "/models"          # all GGUFs in this dir are registered
-  #   router_models_autoload: true          # register without loading into VRAM
-  #   router_models_preset: "/models/preset.ini"  # per-model ctx/temp/quant settings
-  #   router_models_max: 1                  # 1 = hot-swap (saves VRAM)
-  #                                         # 2+ = keep N models loaded simultaneously
-
-  - id: slot_chat
+  - id: slot_router
     port: 8080
-    model_id: gemma-4-E4B-it-uncensored-Q4_K_M
-    role: chat
+    role: chat           # default role; clients override via "model" param
+    model_id: router
     context_size: 65536
     gpu_layers: -1
     batch_size: 512
@@ -34,32 +16,11 @@ active_slots:
     parallel_slots: 1
     flash_attention: on
     enabled: true
-
-  - id: slot_utility
-    port: 8088
-    model_id: qwen3_5_9b
-    role: utility
-    # qwen3.5-9B @ Q4_K_M ≈ 5.7GB weights + ~2.3GB KV@16K = ~8GB (fits alongside chat 64K on 24GB)
-    context_size: 16384
-    gpu_layers: -1
-    batch_size: 512
-    threads: 4
-    parallel_slots: 1
-    flash_attention: on
-    enabled: true
-
-  - id: slot_embedding
-    port: 8082
-    model_id: nomic_embed
-    role: embedding
-    # Embeddings rarely need >8K; 8K gives headroom without wasting VRAM.
-    context_size: 8192
-    gpu_layers: -1
-    batch_size: 512
-    threads: 4
-    parallel_slots: 8
-    embedding_mode: true
-    enabled: true
+    router_mode: true
+    router_models_dir: "/models"
+    router_models_autoload: true
+    router_models_preset: "/etc/llama/preset.ini"
+    router_models_max: 2
 
 # Example: slot_chat with MTP enabled per PR #22673
 # https://github.com/ggml-org/llama.cpp/pull/22673

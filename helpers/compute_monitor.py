@@ -29,7 +29,7 @@ _HOST_URL_ENV = "A0_LMM_HOST_URL"
 _HOST_HOST_ENV = "A0_LMM_HOST_HOST"
 _HOST_PORT_ENV = "A0_LMM_HOST_PORT"
 _HOST_DEFAULT_PORT = 55501
-_HOST_TOKEN_CANDIDATES = ("/a0/tmp/lmm_host_token", "/host/a0_lmm_host.key")
+_HOST_TOKEN_CANDIDATES = ("/host/a0_lmm_host.key", "/a0/tmp/lmm_host_token")
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -60,6 +60,11 @@ class SlotInfo:
     port: Optional[int]
     running: bool
     healthy: bool
+    router_mode: bool = False
+    router_models_dir: str = ""
+    router_models_preset: str = ""
+    router_models_max: int = 1
+    router_models_autoload: bool = True
 
 @dataclass
 class ComputeSnapshot:
@@ -302,6 +307,11 @@ def _query_slots() -> List[SlotInfo]:
                 port=probe_port,
                 running=running,
                 healthy=healthy,
+                router_mode=bool(slot.get("router_mode", False)),
+                router_models_dir=str(slot.get("router_models_dir", "") or ""),
+                router_models_preset=str(slot.get("router_models_preset", "") or ""),
+                router_models_max=int(slot.get("router_models_max", 1) or 1),
+                router_models_autoload=bool(slot.get("router_models_autoload", True)),
             ))
     except Exception as exc:
         logger.debug("Slot query skipped: %s", exc)

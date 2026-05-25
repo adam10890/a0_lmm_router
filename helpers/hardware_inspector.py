@@ -39,7 +39,7 @@ _HOST_URL_ENV = "A0_LMM_HOST_URL"
 _HOST_HOST_ENV = "A0_LMM_HOST_HOST"
 _HOST_PORT_ENV = "A0_LMM_HOST_PORT"
 _HOST_DEFAULT_PORT = 55501
-_HOST_TOKEN_CANDIDATES = ("/a0/tmp/lmm_host_token", "/host/a0_lmm_host.key")
+_HOST_TOKEN_CANDIDATES = ("/host/a0_lmm_host.key", "/a0/tmp/lmm_host_token")
 
 
 # ---------------------------------------------------------------------------

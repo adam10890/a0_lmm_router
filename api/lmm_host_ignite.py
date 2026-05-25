@@ -5,8 +5,8 @@ container can actually run `docker compose` even without a docker socket.
 
 Discovery order for the auth token:
     1. $A0_LMM_HOST_TOKEN environment variable
-    2. /a0/tmp/lmm_host_token    (recommended — mount via docker run -v)
-    3. /host/a0_lmm_host.key     (alt path for users who mount $TEMP)
+    2. /host/a0_lmm_host.key     (live host $TEMP bind mount)
+    3. /a0/tmp/lmm_host_token    (copied fallback)
     4. empty (endpoint returns 503 with a clear setup message)
 
 Host is resolved in this order:
@@ -28,7 +28,7 @@ from helpers.api import ApiHandler
 
 
 DEFAULT_PORT = 55501
-TOKEN_CANDIDATES = ("/a0/tmp/lmm_host_token", "/host/a0_lmm_host.key")
+TOKEN_CANDIDATES = ("/host/a0_lmm_host.key", "/a0/tmp/lmm_host_token")
 ACTIONS = {"ignite", "extinguish", "status", "run-bat", "health", "start_slot", "stop_slot"}
 
 # Actions that map to /models/* endpoints on the host helper
