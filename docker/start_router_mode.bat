@@ -3,12 +3,10 @@
 :: Start Agent Zero LMM fleet in Router Mode
 :: (single container, all models, hot-swap on demand)
 ::
-:: This is the ALTERNATIVE to start_agent_zero.bat's 3-slot fleet.
-:: Run one or the other — never both (they share port 8080).
+:: Standalone helper — start_agent_zero.bat now defaults to Router Mode.
+:: Use this script only when you want router WITHOUT restarting all of A0.
 ::
-:: To switch back to 3-slot mode:
-::   1. stop_router_mode.bat
-::   2. start_agent_zero.bat   (or equivalent docker compose -f docker-compose.lmm.yml up -d)
+:: Legacy 3-slot mode: set A0_LMM_FLEET_MODE=three_slot before start_agent_zero.bat
 :: ============================================================
 setlocal
 

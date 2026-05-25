@@ -77,7 +77,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 DEFAULT_PORT = 55501
 TOKEN_FILENAME = "a0_lmm_host.key"
-COMPOSE_FILE = "usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml"
+COMPOSE_FILE = "usr/plugins/a0_lmm_router/docker/docker-compose.lmm.router.yml"
 RATE_LIMIT_MAX = 30
 RATE_LIMIT_WINDOW_SECONDS = 60
 _rate_limit_hits: dict[str, list[float]] = {}
