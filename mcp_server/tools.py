@@ -17,7 +17,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp_server import router_bridge as bridge
 
 
-def register_tools(mcp: FastMCP) -> None:
+def register_tools(mcp: FastMCP, allow_mutating_tools: bool = False) -> None:
     """Register all router tools onto the MCP server instance."""
 
     # ── Inference tools ────────────────────────────────────────────────────
@@ -103,31 +103,32 @@ def register_tools(mcp: FastMCP) -> None:
         """
         return await bridge.fleet_status()
 
-    @mcp.tool()
-    async def start_fleet() -> dict:
-        """Start all configured llama.cpp slots in parallel.
+    if allow_mutating_tools:
+        @mcp.tool()
+        async def start_fleet() -> dict:
+            """Start all configured llama.cpp slots in parallel.
 
-        Returns per-slot start results. Uses the backend configured in
-        llama_cpp_servers.yaml (remote | docker | subprocess | auto).
-        """
-        return await bridge.start_fleet()
+            Returns per-slot start results. Uses the backend configured in
+            llama_cpp_servers.yaml (remote | docker | subprocess | auto).
+            """
+            return await bridge.start_fleet()
 
-    @mcp.tool()
-    async def start_slot(slot_id: str) -> dict:
-        """Start a single llama.cpp slot by its id (e.g. 'slot_chat').
+        @mcp.tool()
+        async def start_slot(slot_id: str) -> dict:
+            """Start a single llama.cpp slot by its id (e.g. 'slot_chat').
 
-        Returns running/healthy status and any error message.
-        """
-        return await bridge.start_slot(slot_id)
+            Returns running/healthy status and any error message.
+            """
+            return await bridge.start_slot(slot_id)
 
-    @mcp.tool()
-    async def stop_slot(slot_id: str) -> dict:
-        """Stop a single llama.cpp slot by its id.
+        @mcp.tool()
+        async def stop_slot(slot_id: str) -> dict:
+            """Stop a single llama.cpp slot by its id.
 
-        Returns True on success, False on failure.
-        """
-        ok = await bridge.stop_slot(slot_id)
-        return {"stopped": ok, "slot_id": slot_id}
+            Returns True on success, False on failure.
+            """
+            ok = await bridge.stop_slot(slot_id)
+            return {"stopped": ok, "slot_id": slot_id}
 
     # ── Model discovery ────────────────────────────────────────────────────
 
