@@ -533,20 +533,21 @@
                 <div class="slot-item" :class="(s.running && !s.healthy) ? 'broken' : ''">
                   <div class="slot-dot" :class="s.running ? (s.healthy ? 'on' : 'warn') : 'off'"></div>
                   <div style="min-width:0">
-                    <div class="slot-name" x-text="s.id">
-                      <template x-if="s.router_mode">
+                    <div class="slot-name">
+                      <span x-text="s.id"></span>
+                      <template x-if="s && s.router_mode">
                         <span class="badge-router" title="Native Router Mode — hot-swaps models on demand">⚡ ROUTER</span>
                       </template>
                     </div>
                     <div class="slot-meta">
                       <span x-text="s.role + (s.router_mode ? '' : (s.model_id ? ' · ' + s.model_id : '')) + (s.port ? ' · :' + s.port : '')"></span>
-                      <template x-if="s.router_mode && s.router_models_dir">
+                      <template x-if="s && s.router_mode && s.router_models_dir">
                         <span class="slot-router-dir" x-text="'📁 ' + s.router_models_dir"></span>
                       </template>
                     </div>
 
                     <!-- Router Mode config panel (shown only in router mode) -->
-                    <template x-if="s.router_mode">
+                    <template x-if="s && s.router_mode">
                       <details class="slot-router-panel"
                                @toggle="if ($el.open && !routerModels[s.id]) loadRouterModels(s.id)">
                         <summary class="slot-router-summary">⚙ Router Config</summary>
@@ -610,7 +611,7 @@
                     </template>
 
                     <!-- Unified Load Panel (single-model mode only; hidden in router mode) -->
-                    <div class="slot-load-panel" x-show="!swapInProgress[s.id] && !s.router_mode">
+                    <div class="slot-load-panel" x-show="s && !swapInProgress[s.id] && !s.router_mode">
                       <div class="slot-load-row">
                         <select class="slot-model-select"
                                 x-model="s.selectedModelId"

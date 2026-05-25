@@ -100,7 +100,9 @@ services:
       - "--n-gpu-layers"
       - "${ROUTER_GPU_LAYERS:-999}"
       - "--parallel"
-      - "${ROUTER_PARALLEL:-4}"
+      # llama.cpp divides --ctx-size across parallel slots. Keep the default
+      # at 1 so a 64K Agent Zero conversation gets the full 64K window.
+      - "${ROUTER_PARALLEL:-1}"
       - "--batch-size"
       - "${ROUTER_BATCH_SIZE:-512}"
       - "--flash-attn"

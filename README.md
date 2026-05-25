@@ -213,7 +213,48 @@ Toggle files control activation:
 | `conf/llama_cpp_servers.yaml` | Active slots, backend selection, LMM container hosts | A0 root `conf/` |
 | `conf/installed_models.yaml` | Installed GGUF models, roles, VRAM, capabilities | A0 root `conf/` |
 | `conf/compute_resources.yaml` | Hardware inventory and VRAM allocation profiles | A0 root `conf/` |
-| `conf/model_providers.yaml` | LiteLLM provider entries + generic model ID mappings | Plugin `conf/` |
+| `conf/model_providers.yaml` | Agent Zero provider metadata for the LMM Router OpenAI-compatible endpoint | Plugin `conf/` |
+
+### Agent Zero Provider (`lmm_router`)
+
+When the plugin is enabled, `conf/model_providers.yaml` registers an
+`lmm_router` provider for chat and embedding models. The provider delegates to
+LiteLLM's `openai` compatibility mode with `custom_llm_provider: openai`, so
+Agent Zero can call any model alias exposed by the local llama.cpp Router Mode
+endpoint.
+
+Recommended Model Configuration / preset values:
+
+```yaml
+chat:
+  provider: lmm_router
+  name: chat
+  api_base: http://host.docker.internal:8080/v1
+  kwargs:
+    api_key: not-needed
+utility:
+  provider: lmm_router
+  name: utility
+  api_base: http://host.docker.internal:8080/v1
+  kwargs:
+    api_key: not-needed
+embedding:
+  provider: lmm_router
+  name: embedding
+  api_base: http://host.docker.internal:8080/v1
+  kwargs:
+    api_key: not-needed
+```
+
+In Router Mode, the model names must match aliases from
+`conf/models_preset.ini` and `/v1/models`: `chat`, `utility`, and `embedding`.
+Do not use `llama` unless you explicitly add a `llama` alias to
+`models_preset.ini`; otherwise llama.cpp returns `model 'llama' not found`.
+
+Keep `ROUTER_PARALLEL=1` for long Agent Zero conversations. llama.cpp divides
+`--ctx-size` across parallel slots, so `ROUTER_CTX_SIZE=65536` with
+`ROUTER_PARALLEL=4` gives each request only `n_ctx_slot=16384` and can fail with
+`request (...) exceeds the available context size (16384 tokens)`.
 
 ### Backend selection
 
@@ -800,7 +841,7 @@ See `webui/dev-tracker.html` for the full live breakdown.
 - **Chat @ 64K** handles long Agent Zero conversations without truncation (was failing at 16K with 28K+ token prompts).
 - **Utility @ 16K** provides fast sub-agent/wiki operations while conserving VRAM when both slots are loaded simultaneously.
 - **Dynamic KV allocation** means VRAM is consumed proportionally to actual prompt length, not the full context window.
-- **Generic model IDs** (`local-chat`, `local-utility`, `local-embedding`) allow swapping models in `model_providers.yaml` without touching presets.
+- **Router aliases** (`chat`, `utility`, `embedding`) are the stable model IDs Agent Zero sends to the local Router Mode endpoint; swap the backing GGUF files in `models_preset.ini`.
 
 ### GGUF Sources
 
@@ -900,7 +941,7 @@ Chronological record of configuration changes and troubleshooting sessions.
 | `usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml` | Utility slot: `ctx-size 65536` → `16384` (VRAM conservation) |
 | `llama_cpp_servers.yaml` | Chat model_id → `qwen3.5_9b`, context_size → `65536` |
 | `llama_cpp_servers.yaml` | Utility context_size → `16384` |
-| `model_providers.yaml` | Generic IDs `local-chat`/`local-utility` → map to `qwen3.5_9b` |
+| `model_providers.yaml` | Registers the `lmm_router` OpenAI-compatible provider for chat/embedding |
 | `presets.yaml` | `ctx_length`: chat `65536`, utility `16384`, embed `8192` |
 | `presets.yaml` | `api_key: "not-needed"` added to all slots (avoids AuthenticationError) |
 | `README.md` | Updated Current Fleet table, rationale, context budget |
@@ -1233,7 +1274,7 @@ This plugin operates at a specific layer in the A0 model-selection stack. Unders
 
 ### Key Interactions
 
-- **Fleet Bootstrap → Preset**: After clicking **Ignite Fleet** in the dashboard, select the "Local Fleet (llama.cpp RTX 4090)" preset in A0 Settings to route chat/utility calls to your local slots (`:8080`, `:8088`) instead of OpenRouter.
+- **Fleet Bootstrap → Preset**: After clicking **Ignite Fleet** in the dashboard, select the "Local Fleet (llama.cpp RTX 4090)" preset in A0 Settings to route chat, utility, and embedding calls to the Router Mode endpoint (`:8080`) instead of OpenRouter.
 - **Rate Limit Retry + Tiny Router**: Both patch the LLM path. Order is `_15_` (init) before `_20_` (message_loop), so rate-limit patches apply first — safe.
 - **Tool Args Guard**: Orthogonal safety net; runs before strict validation to fix malformed `tool_request` dicts from weaker models (e.g., Nemotron-free tiers).
 

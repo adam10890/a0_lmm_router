@@ -257,6 +257,12 @@
 </div>
 
 <script type="module">
+import { callJsonApi } from "/js/api.js";
+
+function lmmApiCall(handler, data = {}) {
+  return callJsonApi(`/plugins/a0_lmm_router/${handler}`, data);
+}
+
 function lmmConfig() {
   return {
     context: null,
@@ -285,11 +291,7 @@ function lmmConfig() {
     async refreshStatus() {
       this.statusMsg = 'checking...';
       try {
-        const r = await fetch('/plugins/a0_lmm_router/llamacpp_list_models', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin', body: JSON.stringify({})
-        });
-        const d = await r.json();
+        const d = await lmmApiCall('llamacpp_list_models');
         if (d.ok) {
           this.modelsDir = d.models_dir || '';
           this.models = d.models || [];
@@ -297,11 +299,7 @@ function lmmConfig() {
       } catch (_) {}
 
       try {
-        const r2 = await fetch('/plugins/a0_lmm_router/lmm_compute_stats', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin', body: JSON.stringify({})
-        });
-        const d2 = await r2.json();
+        const d2 = await lmmApiCall('lmm_compute_stats');
         if (d2.ok) {
           this.slots = (d2.slots || []).map(s => ({
             id: s.id || s.name,
@@ -324,11 +322,7 @@ function lmmConfig() {
 
     async loadModels() {
       try {
-        const r = await fetch('/plugins/a0_lmm_router/llamacpp_list_models', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin', body: JSON.stringify({})
-        });
-        const d = await r.json();
+        const d = await lmmApiCall('llamacpp_list_models');
         if (d.ok) { this.models = d.models || []; }
       } catch (_) {}
     },
@@ -349,12 +343,7 @@ function lmmConfig() {
     async _control(op, server) {
       this.actionMsg = { text: `${op}${server ? ' ' + server : ''}...`, type: 'info' };
       try {
-        const r = await fetch('/plugins/a0_lmm_router/llamacpp_control', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ data: { operation: op, server } })
-        });
-        const d = await r.json();
+        const d = await lmmApiCall('llamacpp_control', { data: { operation: op, server } });
         this.actionMsg = { text: d.message || (d.ok ? 'OK' : 'Error'), type: d.ok ? 'ok' : 'err' };
         await this.refreshStatus();
       } catch (e) {
@@ -364,11 +353,7 @@ function lmmConfig() {
 
     async refreshFleetStatus() {
       try {
-        const r = await fetch('/plugins/a0_lmm_router/fleet_status', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin', body: JSON.stringify({})
-        });
-        const d = await r.json();
+        const d = await lmmApiCall('fleet_status');
         if (d.ok) {
           this.fleetStatus = d.fleet_status || {};
           this.hfTokenConfigured = d.hf_token_configured || false;
@@ -380,11 +365,7 @@ function lmmConfig() {
       if (!this.hfTokenInput) return;
       this.actionMsg = { text: 'Setting HF token...', type: 'info' };
       try {
-        const r = await fetch('/plugins/a0_lmm_router/set_hf_token', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin', body: JSON.stringify({ token: this.hfTokenInput })
-        });
-        const d = await r.json();
+        const d = await lmmApiCall('set_hf_token', { token: this.hfTokenInput });
         this.actionMsg = { text: d.message || (d.ok ? 'HF token set' : 'Error'), type: d.ok ? 'ok' : 'err' };
         if (d.ok) {
           this.showHfTokenModal = false;
@@ -399,11 +380,7 @@ function lmmConfig() {
     async clearHfToken() {
       this.actionMsg = { text: 'Clearing HF token...', type: 'info' };
       try {
-        const r = await fetch('/plugins/a0_lmm_router/clear_hf_token', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin', body: JSON.stringify({})
-        });
-        const d = await r.json();
+        const d = await lmmApiCall('clear_hf_token');
         this.actionMsg = { text: d.message || (d.ok ? 'HF token cleared' : 'Error'), type: d.ok ? 'ok' : 'err' };
         if (d.ok) {
           this.showHfTokenModal = false;
@@ -418,15 +395,11 @@ function lmmConfig() {
       if (!this.installRepo || !this.installFilename) return;
       this.actionMsg = { text: 'Starting model installation...', type: 'info' };
       try {
-        const r = await fetch('/plugins/a0_lmm_router/lmm_model_install', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin', body: JSON.stringify({
-            repo_id: this.installRepo,
-            filename: this.installFilename,
-            role: this.installRole || null
-          })
+        const d = await lmmApiCall('lmm_model_install', {
+          repo_id: this.installRepo,
+          filename: this.installFilename,
+          role: this.installRole || null
         });
-        const d = await r.json();
         this.actionMsg = { text: d.message || (d.ok ? 'Installation started' : 'Error'), type: d.ok ? 'ok' : 'err' };
         if (d.ok) {
           this.showInstallModal = false;
@@ -453,11 +426,7 @@ function lmmConfig() {
       if (!confirm('Delete this model?')) return;
       this.actionMsg = { text: 'Deleting model...', type: 'info' };
       try {
-        const r = await fetch('/plugins/a0_lmm_router/delete_model', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin', body: JSON.stringify({ model_id: modelId })
-        });
-        const d = await r.json();
+        const d = await lmmApiCall('delete_model', { model_id: modelId });
         this.actionMsg = { text: d.message || (d.ok ? 'Model deleted' : 'Error'), type: d.ok ? 'ok' : 'err' };
         if (d.ok) {
           this.loadModels();
@@ -473,11 +442,7 @@ function lmmConfig() {
       if (!slot) return;
       this.actionMsg = { text: 'Assigning model...', type: 'info' };
       try {
-        const r = await fetch('/plugins/a0_lmm_router/assign_model', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin', body: JSON.stringify({ slot, model_id: modelId, apply_now: true })
-        });
-        const d = await r.json();
+        const d = await lmmApiCall('assign_model', { slot, model_id: modelId, apply_now: true });
         this.actionMsg = { text: d.message || (d.ok ? 'Model assigned' : 'Error'), type: d.ok ? 'ok' : 'err' };
         if (d.ok) {
           this.loadModels();
@@ -492,11 +457,7 @@ function lmmConfig() {
       if (!confirm('Upgrade llama.cpp image and restart fleet?')) return;
       this.actionMsg = { text: 'Starting fleet upgrade...', type: 'info' };
       try {
-        const r = await fetch('/plugins/a0_lmm_router/fleet_upgrade', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin', body: JSON.stringify({})
-        });
-        const d = await r.json();
+        const d = await lmmApiCall('fleet_upgrade');
         this.actionMsg = { text: d.message || (d.ok ? 'Fleet upgrade started' : 'Error'), type: d.ok ? 'ok' : 'err' };
       } catch (e) {
         this.actionMsg = { text: 'Request failed: ' + e.message, type: 'err' };
@@ -507,11 +468,7 @@ function lmmConfig() {
       if (!confirm('Rollback to previous llama.cpp image?')) return;
       this.actionMsg = { text: 'Rolling back fleet...', type: 'info' };
       try {
-        const r = await fetch('/plugins/a0_lmm_router/fleet_upgrade_rollback', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin', body: JSON.stringify({})
-        });
-        const d = await r.json();
+        const d = await lmmApiCall('fleet_upgrade_rollback');
         this.actionMsg = { text: d.message || (d.ok ? 'Rollback started' : 'Error'), type: d.ok ? 'ok' : 'err' };
       } catch (e) {
         this.actionMsg = { text: 'Request failed: ' + e.message, type: 'err' };
@@ -531,11 +488,7 @@ function lmmConfig() {
         const jobIds = this.activeJobs.map(j => j.id);
         const jobs = [];
         for (const jobId of jobIds) {
-          const r = await fetch(`/plugins/a0_lmm_router/job_status?job_id=${jobId}`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            credentials: 'same-origin', body: JSON.stringify({})
-          });
-          const d = await r.json();
+          const d = await lmmApiCall('job_status', { job_id: jobId });
           if (d.ok && d.job) {
             if (d.job.status === 'completed' || d.job.status === 'failed' || d.job.status === 'cancelled') {
               continue;
@@ -554,11 +507,7 @@ function lmmConfig() {
 
     async cancelJob(jobId) {
       try {
-        const r = await fetch('/plugins/a0_lmm_router/cancel_job', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin', body: JSON.stringify({ job_id: jobId })
-        });
-        const d = await r.json();
+        const d = await lmmApiCall('cancel_job', { job_id: jobId });
         if (d.ok) {
           this.activeJobs = this.activeJobs.filter(j => j.id !== jobId);
         }

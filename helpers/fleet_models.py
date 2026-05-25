@@ -24,14 +24,19 @@ log = logging.getLogger("a0_lmm_router.fleet_models")
 # ---------------------------------------------------------------------------
 
 _HELPER_BASE = os.environ.get("A0_LMM_HELPER_URL", "http://host.docker.internal:55501")
-_TOKEN_PATH = os.environ.get("A0_LMM_HOST_TOKEN_PATH", "/a0/tmp/lmm_host_token")
+_TOKEN_CANDIDATES = ("/host/a0_lmm_host.key", "/a0/tmp/lmm_host_token")
 
 
 def _read_token() -> str:
-    try:
-        return Path(_TOKEN_PATH).read_text(encoding="utf-8").strip()
-    except Exception:
-        return ""
+    env_path = os.environ.get("A0_LMM_HOST_TOKEN_PATH", "").strip()
+    for path in ((env_path,) if env_path else ()) + _TOKEN_CANDIDATES:
+        try:
+            p = Path(path)
+            if p.is_file():
+                return p.read_text(encoding="utf-8").strip()
+        except Exception:
+            continue
+    return ""
 
 
 def _helper_request(method: str, path: str, body: Optional[dict] = None, timeout: int = 30) -> dict:

@@ -6,20 +6,27 @@
  */
 
 // ── A0 API compatibility shim ────────────────────────────────────────────
-// A0 v1.15 dropped `window.api` and exposes only `globalThis.sendJsonData`.
-// Older A0 versions had both. Use whichever exists so the dashboard works
-// across versions.
+// A0 v1.15 dropped `window.api`. Most plugin pages import /js/api.js as an
+// ES module, but this dashboard is loaded as a classic script from a modal.
+// Use any already-injected global first, then lazily import the official API
+// module so the dashboard is not stuck in "Connection failed". The modal can
+// inject this script more than once into the same page, so keep the cache on
+// globalThis instead of declaring a top-level `let`.
+globalThis.__a0LmmDashboardApiModulePromise =
+  globalThis.__a0LmmDashboardApiModulePromise || null;
+
 function _a0ApiCall(endpoint, data) {
-  if (typeof window.sendJsonData === 'function') {
-    return window.sendJsonData(endpoint, data);
+  if (typeof globalThis.sendJsonData === 'function') {
+    return globalThis.sendJsonData(endpoint, data);
   }
-  if (window.api && typeof window.api.callJsonApi === 'function') {
-    return window.api.callJsonApi(endpoint, data);
+  if (globalThis.api && typeof globalThis.api.callJsonApi === 'function') {
+    return globalThis.api.callJsonApi(endpoint, data);
   }
-  return Promise.reject(new Error(
-    'A0 API client not found - neither window.sendJsonData nor window.api.callJsonApi is defined. ' +
-    'Open this dashboard from inside the A0 WebUI (not as a standalone file).'
-  ));
+  if (!globalThis.__a0LmmDashboardApiModulePromise) {
+    globalThis.__a0LmmDashboardApiModulePromise = import('/js/api.js');
+  }
+  return globalThis.__a0LmmDashboardApiModulePromise
+    .then(({ callJsonApi }) => callJsonApi(endpoint, data));
 }
 
 function createDashboardStore() {

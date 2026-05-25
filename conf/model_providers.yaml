@@ -1,41 +1,24 @@
-# a0_lmm_router — local llamacpp provider entries
-# Auto-merged by helpers/providers.py when this plugin is enabled.
-# Slots map to ports defined in conf/llama_cpp_servers.yaml (or plugin conf/).
+# a0_lmm_router — Agent Zero provider metadata.
+#
+# This plugin runs the llama.cpp Router Mode fleet separately. These entries only
+# teach Agent Zero's Model Configuration UI how to call it as an OpenAI-compatible
+# endpoint. Configure the API base per model/preset, usually:
+#   http://host.docker.internal:8080/v1
 
-# Generic model IDs — update current_model here to swap models without touching presets.
-generic_models:
-  local-chat:
-    description: "Best reasoning model (Qwen3.5-9B, 64K context)"
-    current_model: "qwen3.5-9b"
-  local-utility:
-    description: "Fast utility/coding model"
-    current_model: "qwen3.5-9b"
-  local-embedding:
-    description: "Text embedding model"
-    current_model: "nomic-embed-text-v1.5"
+chat:
+  lmm_router:
+    name: LMM Router
+    litellm_provider: openai
+    models_list:
+      endpoint_url: "/models"
+    kwargs:
+      custom_llm_provider: openai
 
-providers:
-  - id: llamacpp_local_chat
-    name: "llama.cpp (local chat)"
-    type: openai_compatible
-    base_url: "http://host.docker.internal:8080/v1"
-    api_key: "not-needed"
-    roles: [chat]
-    description: "Local llama.cpp chat server (slot_chat, port 8080)"
-
-  - id: llamacpp_local_utility
-    name: "llama.cpp (local utility)"
-    type: openai_compatible
-    base_url: "http://host.docker.internal:8088/v1"
-    api_key: "not-needed"
-    roles: [utility]
-    description: "Local llama.cpp utility server (slot_utility, port 8088)"
-
-  - id: llamacpp_local_embedding
-    name: "llama.cpp (local embedding)"
-    type: openai_compatible
-    base_url: "http://host.docker.internal:8082/v1"
-    api_key: "not-needed"
-    roles: [embedding]
-    description: "Local llama.cpp embedding server (slot_embed, port 8082)"
-    enabled: true
+embedding:
+  lmm_router:
+    name: LMM Router
+    litellm_provider: openai
+    models_list:
+      endpoint_url: "/models"
+    kwargs:
+      custom_llm_provider: openai
