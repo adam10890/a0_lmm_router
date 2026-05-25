@@ -99,6 +99,8 @@ MUTATING_ENDPOINTS = {
     "/models/verify",
     "/models/jobs/cancel",
     "/tokens/hf",
+    "/router/write_preset_ini",
+    "/router/restart",
 }
 
 # Whitelist of .bat files that /run-bat is allowed to execute (basename only)
@@ -184,6 +186,90 @@ def _resolve_compose_path(requested: str | None, default_compose: str, project_d
     if resolved not in _compose_allowlist(project_dir):
         raise ValueError(f"compose path not allowed: {resolved}")
     return resolved
+
+
+def _default_preset_host_path(project_dir: str) -> Path:
+    env_path = os.environ.get("LLAMACPP_PRESET_HOST", "").strip()
+    if env_path:
+        return Path(env_path).resolve()
+    return (Path(project_dir) / "usr" / "plugins" / "a0_lmm_router" / "conf" / "models_preset.ini").resolve()
+
+
+def _resolve_preset_path(requested: str | None, project_dir: str) -> Path:
+    allowed = _default_preset_host_path(project_dir)
+    candidate = Path(requested).resolve() if requested else allowed
+    if candidate != allowed:
+        raise ValueError(f"preset path not allowed: {candidate}")
+    return candidate
+
+
+def _rewrite_preset_alias_model(content: str, alias: str, model_path: str) -> tuple[str, str]:
+    """Replace only the model line in the requested alias section."""
+    if not alias or not model_path:
+        raise ValueError("alias and model_path are required")
+    lines = content.splitlines(keepends=True)
+    out: list[str] = []
+    in_section = False
+    found_section = False
+    replaced = False
+    snippet: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if in_section:
+                in_section = False
+            section = stripped[1:-1].strip()
+            if section == alias:
+                in_section = True
+                found_section = True
+        if in_section and stripped.lower().startswith("model") and "=" in stripped:
+            newline = "\r\n" if line.endswith("\r\n") else "\n" if line.endswith("\n") else ""
+            line = f"model = {model_path}{newline}"
+            replaced = True
+        out.append(line)
+        if in_section:
+            snippet.append(line)
+
+    if not found_section:
+        raise ValueError(f"alias section not found: {alias}")
+    if not replaced:
+        raise ValueError(f"model line not found in alias section: {alias}")
+    return "".join(out), "".join(snippet)
+
+
+def _write_preset_ini_atomic(path: Path, content: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    backup = path.with_suffix(path.suffix + ".bak")
+    if path.exists():
+        shutil.copy2(path, backup)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    tmp.replace(path)
+    return backup
+
+
+def _restart_router_container() -> dict:
+    try:
+        result = subprocess.run(
+            ["docker", "restart", "a0-llama-router"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        return {
+            "ok": result.returncode == 0,
+            "returncode": result.returncode,
+            "stdout": result.stdout.strip(),
+            "stderr": result.stderr.strip(),
+        }
+    except FileNotFoundError:
+        return {"ok": False, "error": "docker not found in PATH"}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "docker restart timed out"}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 def _preflight_fleet_mode(compose_path: str) -> dict:
@@ -1194,6 +1280,31 @@ class Handler(BaseHTTPRequestHandler):
             containers = _container_status()
             fleet_mode = detect_fleet_mode() if detect_fleet_mode else {"mode": "unknown"}
             self._send_json(200, {"ok": True, "containers": containers, "fleet_mode": fleet_mode})
+
+        elif parsed.path == "/router/write_preset_ini":
+            try:
+                preset_path = _resolve_preset_path(body.get("preset_path"), project_dir)
+                content = body.get("content")
+                snippet = ""
+                if content is None:
+                    alias = body.get("alias", "").strip()
+                    model_path = body.get("model_path", "").strip()
+                    current = preset_path.read_text(encoding="utf-8")
+                    content, snippet = _rewrite_preset_alias_model(current, alias, model_path)
+                backup = _write_preset_ini_atomic(preset_path, str(content))
+                self._send_json(200, {
+                    "ok": True,
+                    "preset_path": str(preset_path),
+                    "backup_path": str(backup),
+                    "snippet": snippet,
+                })
+            except Exception as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+
+        elif parsed.path == "/router/restart":
+            result = _restart_router_container()
+            result["action"] = "restart_router"
+            self._send_json(200 if result.get("ok") else 500, result)
 
         elif parsed.path == "/run-bat":
             bat_name = body.get("bat", "")
