@@ -58,6 +58,13 @@ except ImportError:
     calculate_optimal_context = None  # type: ignore
     read_gguf_metadata = None  # type: ignore
 
+try:
+    from fleet_mode import compose_target_mode, detect_fleet_mode, is_conflicting_mode
+except ImportError:
+    compose_target_mode = None  # type: ignore
+    detect_fleet_mode = None  # type: ignore
+    is_conflicting_mode = None  # type: ignore
+
 # Optional huggingface_hub for model downloads
 try:
     from huggingface_hub import hf_hub_download, HfApi
@@ -177,6 +184,23 @@ def _resolve_compose_path(requested: str | None, default_compose: str, project_d
     if resolved not in _compose_allowlist(project_dir):
         raise ValueError(f"compose path not allowed: {resolved}")
     return resolved
+
+
+def _preflight_fleet_mode(compose_path: str) -> dict:
+    if not (compose_target_mode and detect_fleet_mode and is_conflicting_mode):
+        return {"ok": True, "mode": "unknown"}
+    target_mode = compose_target_mode(compose_path)
+    fleet_mode = detect_fleet_mode()
+    active_mode = fleet_mode.get("mode", "idle")
+    if is_conflicting_mode(active_mode, target_mode):
+        return {
+            "ok": False,
+            "status": 409,
+            "error": "conflicting llama.cpp fleet is already running",
+            "target_mode": target_mode,
+            "fleet_mode": fleet_mode,
+        }
+    return {"ok": True, "target_mode": target_mode, "fleet_mode": fleet_mode}
 
 
 def _rate_limit_allow(client_ip: str, now: float | None = None) -> bool:
@@ -1153,6 +1177,10 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/ignite":
+            preflight = _preflight_fleet_mode(compose)
+            if not preflight.get("ok"):
+                self._send_json(int(preflight.get("status", 409)), preflight)
+                return
             result = _run_docker_compose(compose, "up", "-d")
             result["action"] = "ignite"
             self._send_json(200 if result["ok"] else 500, result)
@@ -1164,7 +1192,8 @@ class Handler(BaseHTTPRequestHandler):
 
         elif parsed.path == "/status":
             containers = _container_status()
-            self._send_json(200, {"ok": True, "containers": containers})
+            fleet_mode = detect_fleet_mode() if detect_fleet_mode else {"mode": "unknown"}
+            self._send_json(200, {"ok": True, "containers": containers, "fleet_mode": fleet_mode})
 
         elif parsed.path == "/run-bat":
             bat_name = body.get("bat", "")

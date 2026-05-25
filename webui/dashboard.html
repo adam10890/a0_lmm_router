@@ -227,6 +227,21 @@
 
         .empty-state { text-align:center; padding:20px; color:var(--muted); font-size:.85rem; }
 
+        /* Fleet mode banner */
+        .fleet-mode-banner {
+          display:flex; align-items:center; justify-content:space-between; gap:10px;
+          padding:10px 14px; margin-bottom:14px; border-radius:10px;
+          background:var(--surface); border:1px solid var(--border);
+          font-size:.78rem;
+        }
+        .fleet-mode-label { color:var(--muted); text-transform:uppercase; letter-spacing:.08em; font-weight:700; }
+        .fleet-mode-value { font-family:'SF Mono','Menlo','Consolas',monospace; font-weight:800; }
+        .fleet-mode-router { color:var(--accent); }
+        .fleet-mode-three_slot { color:var(--info); }
+        .fleet-mode-conflict { color:var(--err); }
+        .fleet-mode-idle, .fleet-mode-unknown { color:var(--muted); }
+        .fleet-mode-note { color:var(--soft); font-size:.72rem; }
+
         /* VRAM Budget Visualizer */
         .vram-stacked-wrap { margin-bottom:12px; }
         .vram-stacked-label { font-size:.72rem; color:var(--muted); margin-bottom:6px; font-weight:600; }
@@ -425,6 +440,24 @@
 
             </div>
           </div>
+        </div>
+
+        <!-- ─── Fleet Mode Banner ──────────────────────────────── -->
+        <div class="fleet-mode-banner">
+          <div>
+            <span class="fleet-mode-label">Fleet mode</span>
+            <span class="fleet-mode-value"
+                  :class="'fleet-mode-' + (fleetMode.mode || 'unknown')"
+                  x-text="(fleetMode.mode || 'unknown').replace('_', '-').toUpperCase()"></span>
+          </div>
+          <div class="fleet-mode-note"
+               x-text="fleetMode.mode === 'conflict'
+                 ? 'Router and 3-slot containers are both running; stop one stack before ignite.'
+                 : fleetMode.mode === 'router'
+                   ? 'Native llama.cpp Router Mode is active.'
+                   : fleetMode.mode === 'three_slot'
+                     ? 'Legacy 3-slot fleet is active.'
+                     : 'No llama.cpp fleet detected yet.'"></div>
         </div>
 
         <!-- ─── VRAM Budget Visualizer ────────────────────────── -->

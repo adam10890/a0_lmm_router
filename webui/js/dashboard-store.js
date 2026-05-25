@@ -68,6 +68,7 @@ function createDashboardStore() {
     lastUpdated: null,
     swapInProgress: {},       // keyed by slot_id — true when assigning/restarting
     slotErrors: {},            // keyed by slot_id — error message from last assign/load
+    fleetMode: { mode: 'unknown', router_running: false, three_slot_running: false, containers: {} },
 
     // Fleet ignition state
     igniteState: 'idle',      // idle | pending | ok | needs_host | error
@@ -194,6 +195,7 @@ function createDashboardStore() {
         if (d.ok) {
           this.gpus = d.gpus || [];
           this.cpu = d.cpu || this.cpu;
+          this.fleetMode = d.fleet_mode || this.fleetMode;
           // Merge fresh slot data into existing slots so UI-only
           // properties (selectedModelId, _ctxSlider, _ctxOverride)
           // survive poll refreshes.
