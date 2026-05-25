@@ -29,6 +29,11 @@ from flask import Request
 from helpers.api import ApiHandler
 from helpers import files
 
+try:
+    from usr.plugins.a0_lmm_router.helpers.fleet_mode import detect_fleet_mode, compose_target_mode, is_conflicting_mode
+except Exception:
+    from helpers.fleet_mode import detect_fleet_mode, compose_target_mode, is_conflicting_mode
+
 
 PLUGIN_DIR = "/a0/usr/plugins/a0_lmm_router"
 LAUNCHER_PATH = f"{PLUGIN_DIR}/launcher.py"
@@ -104,6 +109,20 @@ class LmmFleetIgnite(ApiHandler):
             backend = global_cfg.get("backend", "auto")
             lmm_hosts = global_cfg.get("lmm_hosts", {}) or {}
             active_slots = cfg.get("active_slots", []) or []
+            target_mode = "router" if any(bool(s.get("router_mode", False)) for s in active_slots) else "three_slot"
+            fleet_mode = detect_fleet_mode()
+            active_mode = fleet_mode.get("mode", "idle")
+            if is_conflicting_mode(active_mode, target_mode):
+                return {
+                    "ok": False,
+                    "state": "fleet_mode_conflict",
+                    "error": "conflicting llama.cpp fleet is already running",
+                    "message": (
+                        f"Configured mode is {target_mode}, but active fleet mode is {active_mode}. "
+                        "Stop the active fleet before igniting the other stack."
+                    ),
+                    "fleet_mode": fleet_mode,
+                }
 
             # Probe every configured slot.
             probes = []
@@ -135,6 +154,8 @@ class LmmFleetIgnite(ApiHandler):
                 "reachable_count": len(reachable),
                 "healthy_count": len(healthy),
                 "slots": probes,
+                "fleet_mode": fleet_mode,
+                "target_mode": target_mode,
                 "launcher": {
                     "returncode": rc,
                     "stdout": stdout[-4000:],
@@ -156,8 +177,13 @@ class LmmFleetIgnite(ApiHandler):
                     "Run the host-side ignition to bring the rest online."
                 )
                 result["host_command"] = HOST_BAT_HINT
+                compose_file = (
+                    "usr/plugins/a0_lmm_router/docker/docker-compose.lmm.router.yml"
+                    if compose_target_mode("docker-compose.lmm.router.yml") == target_mode
+                    else "usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml"
+                )
                 result["docker_compose_hint"] = (
-                    "docker compose -f usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml up -d"
+                    f"docker compose -f {compose_file} up -d"
                 )
             else:
                 result["state"] = "partial"

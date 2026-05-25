@@ -227,6 +227,39 @@
 
         .empty-state { text-align:center; padding:20px; color:var(--muted); font-size:.85rem; }
 
+        /* Fleet mode banner */
+        .fleet-mode-banner {
+          display:flex; align-items:center; justify-content:space-between; gap:10px;
+          padding:10px 14px; margin-bottom:14px; border-radius:10px;
+          background:var(--surface); border:1px solid var(--border);
+          font-size:.78rem;
+        }
+        .fleet-mode-label { color:var(--muted); text-transform:uppercase; letter-spacing:.08em; font-weight:700; }
+        .fleet-mode-value { font-family:'SF Mono','Menlo','Consolas',monospace; font-weight:800; }
+        .fleet-mode-router { color:var(--accent); }
+        .fleet-mode-three_slot { color:var(--info); }
+        .fleet-mode-conflict { color:var(--err); }
+        .fleet-mode-idle, .fleet-mode-unknown { color:var(--muted); }
+        .fleet-mode-note { color:var(--soft); font-size:.72rem; }
+
+        /* Role bindings */
+        .role-binding-row {
+          display:grid; grid-template-columns:minmax(110px,.7fr) minmax(180px,1.4fr) minmax(180px,1.4fr) auto;
+          gap:10px; align-items:center; padding:10px 0; border-bottom:1px solid var(--border);
+        }
+        .role-binding-row:last-child { border-bottom:none; }
+        .role-dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:8px; }
+        .role-dot.chat { background:#cba6f7; }
+        .role-dot.utility { background:#89b4fa; }
+        .role-dot.embedding { background:#94e2d5; }
+        .role-binding-title { font-weight:800; text-transform:uppercase; letter-spacing:.08em; font-size:.72rem; }
+        .role-binding-current { color:var(--text); font-size:.78rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .role-binding-meta { display:flex; gap:6px; flex-wrap:wrap; margin-top:4px; }
+        .role-chip { font-size:.66rem; border:1px solid var(--border-soft); border-radius:999px; padding:1px 7px; color:var(--muted); }
+        .role-chip.loaded { color:var(--ok); border-color:rgba(166,227,161,.35); background:rgba(166,227,161,.08); }
+        .role-binding-actions { display:flex; gap:6px; align-items:center; }
+        .role-binding-error { color:var(--err); font-size:.68rem; margin-top:4px; }
+
         /* VRAM Budget Visualizer */
         .vram-stacked-wrap { margin-bottom:12px; }
         .vram-stacked-label { font-size:.72rem; color:var(--muted); margin-bottom:6px; font-weight:600; }
@@ -427,6 +460,83 @@
           </div>
         </div>
 
+        <!-- ─── Fleet Mode Banner ──────────────────────────────── -->
+        <div class="fleet-mode-banner">
+          <div>
+            <span class="fleet-mode-label">Fleet mode</span>
+            <span class="fleet-mode-value"
+                  :class="'fleet-mode-' + (fleetMode.mode || 'unknown')"
+                  x-text="(fleetMode.mode || 'unknown').replace('_', '-').toUpperCase()"></span>
+          </div>
+          <div class="fleet-mode-note"
+               x-text="fleetMode.mode === 'conflict'
+                 ? 'Router and 3-slot containers are both running; stop one stack before ignite.'
+                 : fleetMode.mode === 'router'
+                   ? 'Native llama.cpp Router Mode is active.'
+                   : fleetMode.mode === 'three_slot'
+                     ? 'Legacy 3-slot fleet is active.'
+                     : 'No llama.cpp fleet detected yet.'"></div>
+        </div>
+
+        <!-- ─── Role Bindings ──────────────────────────────────── -->
+        <div class="section">
+          <div class="section-head">
+            <div class="section-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+              Role Bindings
+            </div>
+            <div class="section-meta">chat / utility / embedding aliases</div>
+            <button class="btn btn-ghost" style="margin-left:auto" @click="_fetchRoleBindings()">Refresh</button>
+          </div>
+          <div class="section-body">
+            <template x-if="!roleBindings.length">
+              <div class="empty-state">No router role bindings detected yet.</div>
+            </template>
+            <template x-for="b in roleBindings" :key="b.alias">
+              <div>
+                <div class="role-binding-row">
+                  <div>
+                    <div class="role-binding-title">
+                      <span class="role-dot" :class="b.alias"></span><span x-text="b.alias"></span>
+                    </div>
+                    <div class="role-binding-meta">
+                      <span class="role-chip" :class="b.loaded ? 'loaded' : ''" x-text="b.loaded ? ('LOADED :' + (b.port || '?')) : 'AUTOLOAD'"></span>
+                      <span class="role-chip" x-show="b.ctx_size" x-text="'ctx ' + b.ctx_size"></span>
+                    </div>
+                  </div>
+                  <div>
+                    <div class="role-binding-current" :title="b.model_path" x-text="b.model_filename || b.model_path || '(not set)'"></div>
+                    <div class="role-binding-meta">
+                      <span class="role-chip" x-text="b.model_path || 'no path'"></span>
+                    </div>
+                  </div>
+                  <div>
+                    <select class="slot-model-select"
+                            x-model="roleBindingSelections[b.alias]">
+                      <option value="">-- select installed model --</option>
+                      <template x-for="opt in getRoleModelOptions(b.alias)" :key="opt.value">
+                        <option :value="opt.value" x-text="opt.label"></option>
+                      </template>
+                    </select>
+                    <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:.68rem;color:var(--muted)">
+                      <input type="checkbox" x-model="roleBindingShowAll[b.alias]">
+                      show all
+                    </label>
+                  </div>
+                  <div class="role-binding-actions">
+                    <button class="btn btn-primary slot-assign-btn"
+                            @click="setRoleAliasModel(b.alias, roleBindingSelections[b.alias])"
+                            :disabled="!roleBindingSelections[b.alias] || roleBindingSelections[b.alias] === b.model_path || roleBindingUpdating[b.alias]"
+                            x-text="roleBindingUpdating[b.alias] ? 'restarting...' : 'Apply'"></button>
+                    <span class="spin" x-show="roleBindingUpdating[b.alias]">⟳</span>
+                  </div>
+                </div>
+                <div class="role-binding-error" x-show="roleBindingErrors[b.alias]" x-text="roleBindingErrors[b.alias]"></div>
+              </div>
+            </template>
+          </div>
+        </div>
+
         <!-- ─── VRAM Budget Visualizer ────────────────────────── -->
         <template x-if="hasGPU">
           <div class="section">
@@ -566,7 +676,7 @@
 
                         <!-- Default model selector -->
                         <div class="slot-router-default">
-                          <span class="srg-label" style="margin-bottom:4px;display:block">Default model <span style="color:var(--muted);font-weight:400">(pre-loaded at startup)</span></span>
+                          <span class="srg-label" style="margin-bottom:4px;display:block">Pre-load on startup <span style="color:var(--muted);font-weight:400">(single-default hint)</span></span>
 
                           <template x-if="routerModels[s.id] && routerModels[s.id].loading">
                             <span style="font-size:.7rem;color:var(--muted)">⟳ Loading models…</span>
@@ -641,19 +751,19 @@
                         <div class="ctx-slider-header">
                           <span class="ctx-slider-label">Context Window</span>
                           <span class="ctx-slider-value"
-                                :style="'color:' + ctxVramColor(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || 8192)"
-                                x-text="((s._ctxSlider || 8192) / 1024).toFixed(0) + 'K tokens'"></span>
+                                :style="'color:' + ctxVramColor(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || getSlotCtxDefault(s))"
+                                x-text="((s._ctxSlider || getSlotCtxDefault(s)) / 1024).toFixed(0) + 'K tokens'"></span>
                         </div>
                         <input type="range" class="ctx-slider"
                                :min="getMinContextForRole(s.role)" :max="(installedModels[s.selectedModelId || getSlotCurrentModelId(s)]?.n_ctx_train || 131072)" step="2048"
-                               :value="s._ctxSlider || getMinContextForRole(s.role)"
+                               :value="s._ctxSlider || getSlotCtxDefault(s)"
                                @input="s._ctxSlider = parseInt($event.target.value)"
-                               :style="'--slider-color:' + ctxVramColor(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || getMinContextForRole(s.role))"/>
+                               :style="'--slider-color:' + ctxVramColor(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || getSlotCtxDefault(s))"/>
                         <div class="ctx-slider-footer">
                           <span class="ctx-slider-min" x-text="(getMinContextForRole(s.role) / 1024).toFixed(0) + 'K'"></span>
                           <span class="ctx-slider-est"
-                                :style="'color:' + ctxVramColor(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || getMinContextForRole(s.role))"
-                                x-text="'KV cache: ~' + estimateKVCacheGB(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || getMinContextForRole(s.role)).toFixed(1) + ' GB'"></span>
+                                :style="'color:' + ctxVramColor(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || getSlotCtxDefault(s))"
+                                x-text="'KV cache: ~' + estimateKVCacheGB(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || getSlotCtxDefault(s)).toFixed(1) + ' GB'"></span>
                           <span class="ctx-slider-max" x-text="((installedModels[s.selectedModelId || getSlotCurrentModelId(s)]?.n_ctx_train || 131072) / 1024).toFixed(0) + 'K'"></span>
                         </div>
                       </div>

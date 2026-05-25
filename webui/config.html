@@ -1,7 +1,7 @@
 <!-- a0_lmm_router config panel — llama.cpp server manager -->
 <div x-data>
   <template x-if="$store.pluginSettingsPrototype">
-    <div x-data="lmmConfig()" x-init="init()" style="font-family:'JetBrains Mono',monospace;background:#0a0e17;min-height:100%;padding:20px;color:#c9d1d9;">
+    <div x-data="lmmConfig()" x-init="init()" x-destroy="cleanup()" style="font-family:'JetBrains Mono',monospace;background:#0a0e17;min-height:100%;padding:20px;color:#c9d1d9;">
 
       <style>
         .lmm-root { --green:#39d353; --amber:#e3b341; --red:#f85149; --blue:#58a6ff; --dim:#8b949e; --border:#21262d; --surface:#161b22; --surface2:#0d1117; }
@@ -280,12 +280,21 @@ function lmmConfig() {
     installRepo: '',
     installFilename: '',
     installRole: '',
+    _pollJobsTimer: null,
 
     init() {
+      this.cleanup();
       this.context = Alpine.store('pluginSettingsPrototype');
       this.refreshStatus();
       this.refreshFleetStatus();
       this.pollJobs();
+    },
+
+    cleanup() {
+      if (this._pollJobsTimer) {
+        clearInterval(this._pollJobsTimer);
+        this._pollJobsTimer = null;
+      }
     },
 
     async refreshStatus() {
@@ -476,7 +485,8 @@ function lmmConfig() {
     },
 
     async pollJobs() {
-      setInterval(async () => {
+      this.cleanup();
+      this._pollJobsTimer = setInterval(async () => {
         if (this.activeJobs.length > 0) {
           await this.refreshJobs();
         }

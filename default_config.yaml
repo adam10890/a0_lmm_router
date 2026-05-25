@@ -1,0 +1,17 @@
+mcp:
+  enabled: true
+  host: 127.0.0.1
+  port: 8095
+  allow_mutating_tools: false
+  token_path: /host/a0_lmm_host.key
+
+host_helper:
+  bind: 127.0.0.1
+  port: 55501
+  compose_allowlist:
+    - usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml
+    - usr/plugins/a0_lmm_router/docker/docker-compose.lmm.router.yml
+
+fleet:
+  preferred_mode: router
+  block_conflicting_mode: true

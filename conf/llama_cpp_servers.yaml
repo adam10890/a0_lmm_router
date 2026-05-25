@@ -193,5 +193,6 @@ ephemeral:
 # -----------------------------------------------------------------
 mcp_server:
   enabled: true
-  host: 0.0.0.0
+  host: 127.0.0.1
   port: 8095
+  allow_mutating_tools: false

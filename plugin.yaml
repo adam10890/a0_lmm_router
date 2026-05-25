@@ -4,6 +4,7 @@ description: "Unified LMM server management + smart routing + MCP server. Backen
 version: "1.3.0"
 author: "frantz"
 settings_sections:
-  - router
+  - external
 per_project_config: true
 per_agent_config: false
+always_enabled: false

@@ -18,6 +18,11 @@ from dataclasses import dataclass, asdict
 
 import yaml
 
+try:
+    from usr.plugins.a0_lmm_router.helpers.fleet_mode import detect_fleet_mode
+except Exception:
+    from fleet_mode import detect_fleet_mode
+
 logger = logging.getLogger(__name__)
 
 # Host helper fallback config (used when nvidia-smi is not available inside
@@ -364,4 +369,5 @@ def get_compute_snapshot() -> Dict[str, Any]:
         "gpus": [asdict(g) for g in snap.gpus],
         "cpu": asdict(snap.cpu),
         "slots": [asdict(s) for s in snap.slots],
+        "fleet_mode": detect_fleet_mode(),
     }

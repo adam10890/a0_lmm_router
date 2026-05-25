@@ -159,6 +159,19 @@ def clear_hf_token() -> dict:
     return _helper_request("DELETE", "/tokens/hf")
 
 
+def write_preset_ini(alias: str, model_path: str, preset_path: str | None = None) -> dict:
+    """Rewrite one alias model line in the router preset on the host."""
+    body = {"alias": alias, "model_path": model_path}
+    if preset_path:
+        body["preset_path"] = preset_path
+    return _helper_request("POST", "/router/write_preset_ini", body, timeout=30)
+
+
+def restart_router() -> dict:
+    """Restart the single llama.cpp router container."""
+    return _helper_request("POST", "/router/restart", timeout=90)
+
+
 def fleet_upgrade() -> dict:
     """Pull latest llama.cpp image and restart fleet."""
     return _helper_request("POST", "/fleet/upgrade", timeout=300)

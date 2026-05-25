@@ -51,6 +51,8 @@ function createDashboardStore() {
     slotRecs:         `${API_BASE}/lmm_slot_recommendations`,
     routerModels:     `${API_BASE}/router_models`,
     setRouterDefault: `${API_BASE}/set_router_default`,
+    routerAliases:    `${API_BASE}/router_aliases`,
+    setRouterAliasModel: `${API_BASE}/set_router_alias_model`,
   };
 
   return {
@@ -68,6 +70,12 @@ function createDashboardStore() {
     lastUpdated: null,
     swapInProgress: {},       // keyed by slot_id — true when assigning/restarting
     slotErrors: {},            // keyed by slot_id — error message from last assign/load
+    fleetMode: { mode: 'unknown', router_running: false, three_slot_running: false, containers: {} },
+    roleBindings: [],
+    roleBindingSelections: {},
+    roleBindingShowAll: {},
+    roleBindingUpdating: {},
+    roleBindingErrors: {},
 
     // Fleet ignition state
     igniteState: 'idle',      // idle | pending | ok | needs_host | error
@@ -159,6 +167,7 @@ function createDashboardStore() {
         this._fetchStats(),
         this._fetchStatsSummary(),
         this._fetchInstalledModels(),
+        this._fetchRoleBindings(),
       ]);
       // Slot recommendations needs slots + installed models loaded.
       await this._fetchSlotRecommendations();
@@ -194,6 +203,7 @@ function createDashboardStore() {
         if (d.ok) {
           this.gpus = d.gpus || [];
           this.cpu = d.cpu || this.cpu;
+          this.fleetMode = d.fleet_mode || this.fleetMode;
           // Merge fresh slot data into existing slots so UI-only
           // properties (selectedModelId, _ctxSlider, _ctxOverride)
           // survive poll refreshes.
@@ -208,6 +218,10 @@ function createDashboardStore() {
               if (old.selectedModelId !== undefined) s.selectedModelId = old.selectedModelId;
               if (old._ctxSlider !== undefined) s._ctxSlider = old._ctxSlider;
               if (old._ctxOverride !== undefined) s._ctxOverride = old._ctxOverride;
+            }
+            if (s._ctxSlider === undefined) {
+              const binding = this.getRoleBinding(s.role);
+              if (binding && binding.ctx_size) s._ctxSlider = binding.ctx_size;
             }
             return s;
           });
@@ -518,6 +532,50 @@ function createDashboardStore() {
       }
     },
 
+    async _fetchRoleBindings() {
+      try {
+        const d = await _a0ApiCall(ENDPOINTS.routerAliases, { slot_id: 'slot_router' });
+        if (!d.ok) return;
+        this.roleBindings = d.roles || [];
+        if (d.models && Object.keys(d.models).length) {
+          this.installedModels = d.models;
+        }
+        for (const binding of this.roleBindings) {
+          if (!this.roleBindingSelections[binding.alias]) {
+            this.roleBindingSelections[binding.alias] = binding.model_path || '';
+          }
+          for (const slot of this.slots || []) {
+            if (slot.role === binding.alias && slot._ctxSlider === undefined && binding.ctx_size) {
+              slot._ctxSlider = binding.ctx_size;
+            }
+          }
+        }
+      } catch (_) { /* silent */ }
+    },
+
+    async setRoleAliasModel(alias, modelPath) {
+      if (!alias || !modelPath) return;
+      this.roleBindingUpdating[alias] = true;
+      this.roleBindingErrors[alias] = '';
+      try {
+        const d = await _a0ApiCall(ENDPOINTS.setRouterAliasModel, {
+          slot_id: 'slot_router',
+          alias,
+          model_path: modelPath,
+        });
+        if (!d.ok) {
+          this.roleBindingErrors[alias] = d.error || 'Failed to update alias';
+          this.roleBindingUpdating[alias] = false;
+          return;
+        }
+        setTimeout(() => this._fetchRoleBindings(), 3000);
+        setTimeout(() => { this.roleBindingUpdating[alias] = false; }, 8000);
+      } catch (e) {
+        this.roleBindingErrors[alias] = e.message || 'Connection failed';
+        this.roleBindingUpdating[alias] = false;
+      }
+    },
+
     getSlotModelOptions(slotRole) {
       // Return installed models suitable for this slot role
       const models = Object.entries(this.installedModels || {});
@@ -539,6 +597,44 @@ function createDashboardStore() {
       for (const [id, m] of Object.entries(this.installedModels)) {
         if (m.file && m.file.replace('.gguf', '') === slotModelId) return id;
         if (id === slotModelId) return id;
+      }
+      return null;
+    },
+
+    modelContainerPath(model) {
+      if (!model) return '';
+      if (model.model_path && String(model.model_path).startsWith('/models/')) return model.model_path;
+      const file = model.file || model.filename || '';
+      const relPath = String(model.path || '').replaceAll('\\', '/').replace(/^\/+|\/+$/g, '');
+      if (!file) return '';
+      return relPath ? `/models/${relPath}/${file}` : `/models/${file}`;
+    },
+
+    getRoleBinding(alias) {
+      return (this.roleBindings || []).find(b => b.alias === alias) || null;
+    },
+
+    getRoleModelOptions(alias) {
+      const showAll = !!this.roleBindingShowAll[alias];
+      const rows = Object.entries(this.installedModels || {});
+      return rows
+        .filter(([_, m]) => showAll || !m.role_hint || m.role_hint === alias || (alias === 'embedding' && m.role_hint === 'embed'))
+        .map(([id, m]) => ({
+          id,
+          label: `${m.file || id}${m.size_gb ? ' (' + m.size_gb + ' GB)' : ''}`,
+          value: this.modelContainerPath(m),
+          role_hint: m.role_hint || '',
+        }))
+        .filter(opt => !!opt.value);
+    },
+
+    _findModelByContainerPath(modelPath) {
+      if (!modelPath) return null;
+      const filename = modelPath.split('/').pop();
+      for (const [id, m] of Object.entries(this.installedModels || {})) {
+        if (this.modelContainerPath(m) === modelPath || m.file === filename || id === filename || id === modelPath) {
+          return { id, ...m };
+        }
       }
       return null;
     },
@@ -598,10 +694,29 @@ function createDashboardStore() {
       const usedGB = gpu.used_vram_mb / 1024;
       const freeGB = gpu.free_vram_mb / 1024;
 
-      // Build segments from running slots
+      // Build segments from router role bindings when available; in Router Mode
+      // this reflects the aliases actually resident in VRAM.
       const segments = [];
-      const runningSlots = this.slots.filter(s => s.running);
+      const loadedBindings = (this.roleBindings || []).filter(b => b.loaded);
 
+      if (loadedBindings.length) {
+        for (const b of loadedBindings) {
+          const model = this._findModelByContainerPath(b.model_path);
+          const estGB = model ? model.size_gb * 1.15 : 3.0;
+          const role = b.alias || 'unknown';
+          const labelName = b.model_filename || (model ? model.file || model.id : '');
+          const color = this._slotColors[role] || this._slotColors._other;
+          segments.push({
+            label: role.charAt(0).toUpperCase() + role.slice(1) + (labelName ? ' (' + labelName + ')' : ''),
+            short: role.charAt(0).toUpperCase() + role.slice(1),
+            gb: estGB,
+            pct: Math.min((estGB / totalGB) * 100, 100),
+            color,
+          });
+        }
+      }
+
+      const runningSlots = loadedBindings.length ? [] : this.slots.filter(s => s.running);
       for (const s of runningSlots) {
         const mid = this.getSlotCurrentModelId(s);
         const model = mid ? this.installedModels[mid] : null;
@@ -647,6 +762,11 @@ function createDashboardStore() {
         reasoning: 32768,
       };
       return MIN_CTX[role] || 2048;
+    },
+
+    getSlotCtxDefault(slot) {
+      const binding = this.getRoleBinding(slot?.role);
+      return Number(binding?.ctx_size || slot?._ctxSlider || this.getMinContextForRole(slot?.role));
     },
 
     /**
