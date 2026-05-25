@@ -19,5 +19,5 @@ def test_dashboard_has_role_bindings_card_and_preload_label():
     html = (PLUGIN_ROOT / "webui" / "dashboard.html").read_text(encoding="utf-8")
 
     assert "Role Bindings" in html
-    assert "role-binding-row" in html
+    assert "role-binding-card" in html
     assert "Pre-load on startup" in html

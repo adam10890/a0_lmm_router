@@ -227,38 +227,109 @@
 
         .empty-state { text-align:center; padding:20px; color:var(--muted); font-size:.85rem; }
 
+        /* Toast stack */
+        .lmm-toast-stack { position:sticky; top:8px; z-index:20; display:flex; flex-direction:column; gap:8px; margin-bottom:12px; }
+        .lmm-toast {
+          padding:10px 14px; border-radius:8px; font-size:.78rem; line-height:1.4;
+          border:1px solid var(--border); background:var(--surface); box-shadow:0 8px 24px rgba(0,0,0,.35);
+          animation:lmm-toast-in .2s ease;
+        }
+        @keyframes lmm-toast-in { from{opacity:0;transform:translateY(-6px)} to{opacity:1;transform:none} }
+        .lmm-toast-ok   { border-color:#a6e3a160; color:var(--ok); background:#a6e3a118; }
+        .lmm-toast-err  { border-color:#f38ba860; color:var(--err); background:#f38ba818; }
+        .lmm-toast-info { border-color:#89b4fa60; color:var(--info); background:#89b4fa18; }
+        .lmm-toast-warn { border-color:#f9e2af60; color:var(--warn); background:#f9e2af18; }
+
         /* Fleet mode banner */
         .fleet-mode-banner {
-          display:flex; align-items:center; justify-content:space-between; gap:10px;
-          padding:10px 14px; margin-bottom:14px; border-radius:10px;
+          display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap;
+          padding:12px 16px; margin-bottom:14px; border-radius:10px;
           background:var(--surface); border:1px solid var(--border);
           font-size:.78rem;
         }
-        .fleet-mode-label { color:var(--muted); text-transform:uppercase; letter-spacing:.08em; font-weight:700; }
-        .fleet-mode-value { font-family:'SF Mono','Menlo','Consolas',monospace; font-weight:800; }
-        .fleet-mode-router { color:var(--accent); }
+        .fleet-mode-banner--router { border-color:#cba6f750; background:linear-gradient(135deg,#cba6f710,#89b4fa08); }
+        .fleet-mode-banner--conflict { border-color:#f38ba860; background:#f38ba812; }
+        .fleet-mode-banner--three_slot { border-color:#89b4fa50; }
+        .fleet-mode-banner--idle { opacity:.95; }
+        .fleet-mode-main { display:flex; flex-direction:column; gap:4px; min-width:0; flex:1; }
+        .fleet-mode-top { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+        .fleet-mode-label { color:var(--muted); text-transform:uppercase; letter-spacing:.08em; font-weight:700; font-size:.68rem; }
+        .fleet-mode-value { font-family:'SF Mono','Menlo','Consolas',monospace; font-weight:800; font-size:.9rem; }
+        .fleet-mode-router, .fleet-mode-router_config { color:var(--accent); }
         .fleet-mode-three_slot { color:var(--info); }
         .fleet-mode-conflict { color:var(--err); }
         .fleet-mode-idle, .fleet-mode-unknown { color:var(--muted); }
-        .fleet-mode-note { color:var(--soft); font-size:.72rem; }
+        .fleet-mode-note { color:var(--soft); font-size:.74rem; line-height:1.45; max-width:52rem; }
+        .fleet-mode-actions { display:flex; gap:6px; flex-wrap:wrap; align-items:center; flex-shrink:0; }
 
-        /* Role bindings */
-        .role-binding-row {
-          display:grid; grid-template-columns:minmax(110px,.7fr) minmax(180px,1.4fr) minmax(180px,1.4fr) auto;
-          gap:10px; align-items:center; padding:10px 0; border-bottom:1px solid var(--border);
+        /* Role bindings — card layout */
+        .role-bindings-grid { display:flex; flex-direction:column; gap:10px; }
+        .role-binding-card {
+          background:var(--surface2); border:1px solid var(--border); border-radius:10px;
+          padding:12px 14px; transition:border-color .2s, box-shadow .2s;
         }
-        .role-binding-row:last-child { border-bottom:none; }
-        .role-dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:8px; }
-        .role-dot.chat { background:#cba6f7; }
-        .role-dot.utility { background:#89b4fa; }
-        .role-dot.embedding { background:#94e2d5; }
-        .role-binding-title { font-weight:800; text-transform:uppercase; letter-spacing:.08em; font-size:.72rem; }
-        .role-binding-current { color:var(--text); font-size:.78rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .role-binding-meta { display:flex; gap:6px; flex-wrap:wrap; margin-top:4px; }
-        .role-chip { font-size:.66rem; border:1px solid var(--border-soft); border-radius:999px; padding:1px 7px; color:var(--muted); }
+        .role-binding-card--updating { border-color:#89b4fa60; box-shadow:0 0 0 1px #89b4fa30; }
+        .role-binding-card--applied { border-color:#a6e3a170; box-shadow:0 0 0 1px #a6e3a130; }
+        .role-binding-card-hdr {
+          display:flex; align-items:flex-start; justify-content:space-between; gap:10px; flex-wrap:wrap;
+          margin-bottom:8px;
+        }
+        .role-binding-card-title { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+        .role-dot { width:9px; height:9px; border-radius:50%; display:inline-block; flex-shrink:0; }
+        .role-dot.chat { background:#cba6f7; box-shadow:0 0 6px #cba6f780; }
+        .role-dot.utility { background:#89b4fa; box-shadow:0 0 6px #89b4fa80; }
+        .role-dot.embedding { background:#94e2d5; box-shadow:0 0 6px #94e2d580; }
+        .role-binding-name { font-weight:800; text-transform:uppercase; letter-spacing:.08em; font-size:.74rem; }
+        .role-binding-meta { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+        .role-chip { font-size:.66rem; border:1px solid var(--border-soft); border-radius:999px; padding:2px 8px; color:var(--muted); }
         .role-chip.loaded { color:var(--ok); border-color:rgba(166,227,161,.35); background:rgba(166,227,161,.08); }
+        .role-chip.source-live { color:var(--info); border-color:rgba(137,180,250,.35); background:rgba(137,180,250,.08); }
+        .role-chip.source-preset { color:var(--warn); border-color:rgba(249,226,175,.35); background:rgba(249,226,175,.08); }
+        .role-binding-model-line { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; margin-bottom:6px; }
+        .role-binding-display { color:var(--color-fg,#cdd6f4); font-size:.9rem; font-weight:700; }
+        .role-binding-size { font-size:.72rem; color:var(--soft); font-weight:600; }
+        .role-binding-path-row { display:flex; gap:6px; align-items:center; margin-bottom:10px; min-width:0; }
+        .role-binding-path {
+          flex:1; min-width:0; font-size:.68rem; color:var(--muted);
+          font-family:'SF Mono','Menlo','Consolas',monospace;
+          overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+        }
+        .role-binding-controls { display:flex; flex-direction:column; gap:8px; }
+        .role-binding-select { width:100%; }
+        .role-binding-footer { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+        .role-binding-toggle { display:flex; align-items:center; gap:8px; font-size:.72rem; color:var(--muted); cursor:pointer; user-select:none; }
+        .role-binding-toggle input { position:absolute; opacity:0; width:0; height:0; }
+        .role-toggle-track {
+          width:32px; height:18px; border-radius:999px; background:var(--border);
+          border:1px solid var(--border-soft); position:relative; transition:background .15s, border-color .15s;
+        }
+        .role-toggle-track::after {
+          content:''; position:absolute; top:2px; left:2px; width:12px; height:12px; border-radius:50%;
+          background:var(--soft); transition:transform .15s, background .15s;
+        }
+        .role-binding-toggle input:checked + .role-toggle-track { background:#89b4fa35; border-color:#89b4fa70; }
+        .role-binding-toggle input:checked + .role-toggle-track::after { transform:translateX(14px); background:var(--info); }
         .role-binding-actions { display:flex; gap:6px; align-items:center; }
-        .role-binding-error { color:var(--err); font-size:.68rem; margin-top:4px; }
+        .btn-ready { box-shadow:0 0 0 1px #89b4fa50; }
+        .btn-no-change { opacity:.45; }
+        .btn-pending { opacity:.85; }
+        .role-binding-error { color:var(--err); font-size:.72rem; margin-top:8px; padding:6px 8px;
+                              background:#f38ba812; border-radius:6px; border:1px solid #f38ba840; }
+        .role-bindings-source { font-size:.68rem; color:var(--muted); margin-top:8px; }
+
+        .section-collapsible > summary.section-head { list-style:none; cursor:pointer; }
+        .section-collapsible > summary.section-head::-webkit-details-marker { display:none; }
+        .section-collapsible > summary.section-head::after {
+          content:'▾'; margin-left:auto; color:var(--muted); font-size:.85rem; transition:transform .15s;
+        }
+        .section-collapsible:not([open]) > summary.section-head::after { transform:rotate(-90deg); }
+        .section-collapsible-hint { font-size:.68rem; color:var(--muted); font-weight:400; margin-left:6px; }
+
+        @media (max-width: 720px) {
+          .fleet-mode-banner { flex-direction:column; }
+          .role-binding-footer { flex-direction:column; align-items:stretch; }
+          .role-binding-actions { justify-content:flex-end; }
+        }
 
         /* VRAM Budget Visualizer */
         .vram-stacked-wrap { margin-bottom:12px; }
@@ -380,6 +451,172 @@
           <div class="lmm-msg info">Loading compute stats…</div>
         </template>
 
+        <!-- Toast notifications -->
+        <div class="lmm-toast-stack" x-show="toasts.length">
+          <template x-for="t in toasts" :key="t.id">
+            <div class="lmm-toast" :class="'lmm-toast-' + (t.type || 'info')" x-text="t.message"></div>
+          </template>
+        </div>
+
+        <!-- ─── Fleet Mode Banner (priority) ─────────────────── -->
+        <div class="fleet-mode-banner" :class="fleetModeBannerClass()">
+          <div class="fleet-mode-main">
+            <div class="fleet-mode-top">
+              <span class="fleet-mode-label">Fleet mode</span>
+              <span class="fleet-mode-value"
+                    :class="'fleet-mode-' + effectiveFleetMode"
+                    x-text="fleetModeDisplay"></span>
+              <template x-if="roleBindingsSourceLabel()">
+                <span class="role-chip"
+                      :class="roleBindingsSource === 'live' ? 'source-live' : 'source-preset'"
+                      x-text="'bindings: ' + roleBindingsSourceLabel()"></span>
+              </template>
+            </div>
+            <div class="fleet-mode-note" x-text="fleetBannerNote()"></div>
+          </div>
+          <div class="fleet-mode-actions">
+            <button class="btn btn-ghost" type="button" @click="refreshFleetAndBindings()"
+                    title="Refresh fleet detection and role bindings">↻ Refresh</button>
+            <template x-if="effectiveFleetMode === 'idle' || effectiveFleetMode === 'unknown' || effectiveFleetMode === 'router_config'">
+              <button class="btn btn-accent" type="button" @click="igniteRouterFleet()"
+                      :disabled="igniteState === 'pending'"
+                      title="Start router stack via host helper">⚡ Ignite Router</button>
+            </template>
+            <template x-if="effectiveFleetMode === 'conflict'">
+              <button class="btn btn-cancel" type="button" @click="hostAction('extinguish')"
+                      :disabled="igniteState === 'pending'">⏻ Stop Fleet</button>
+            </template>
+          </div>
+        </div>
+
+        <!-- ─── Role Bindings (priority) ─────────────────────── -->
+        <div class="section">
+          <div class="section-head">
+            <div class="section-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+              Role Bindings
+            </div>
+            <div class="section-meta">chat · utility · embedding</div>
+            <button class="btn btn-ghost" style="margin-left:auto" type="button"
+                    @click="_fetchRoleBindings()">Refresh</button>
+          </div>
+          <div class="section-body">
+            <template x-if="roleBindingsError">
+              <div class="lmm-msg err" x-text="roleBindingsError"></div>
+            </template>
+            <template x-if="!roleBindings.length && !roleBindingsError">
+              <div class="empty-state">No router role bindings detected yet. Ignite Router Mode or check models_preset.ini.</div>
+            </template>
+            <div class="role-bindings-grid" x-show="roleBindings.length">
+              <template x-for="b in roleBindings" :key="b.alias">
+                <div :class="roleBindingCardClass(b.alias)">
+                  <div class="role-binding-card-hdr">
+                    <div class="role-binding-card-title">
+                      <span class="role-dot" :class="b.alias"></span>
+                      <span class="role-binding-name" x-text="b.alias"></span>
+                      <span class="role-chip" :class="b.loaded ? 'loaded' : ''"
+                            x-text="roleBindingLoadedLabel(b)"
+                            :title="b.loaded ? 'Model resident in router VRAM' : 'Loads on first request'"></span>
+                      <span class="role-chip" x-show="roleBindingCtxLabel(b)" x-text="roleBindingCtxLabel(b)"></span>
+                    </div>
+                    <div class="role-binding-actions">
+                      <button type="button"
+                              :class="roleBindingApplyClass(b.alias, b)"
+                              :disabled="roleBindingApplyDisabled(b.alias, b)"
+                              :title="roleBindingApplyDisabled(b.alias, b) ? 'Select a different model to apply' : 'Rewrite preset and restart router'"
+                              @click="setRoleAliasModel(b.alias, roleBindingSelections[b.alias])"
+                              x-text="roleBindingUpdating[b.alias] ? 'Restarting…' : 'Apply'"></button>
+                      <span class="spin" x-show="roleBindingUpdating[b.alias]">⟳</span>
+                    </div>
+                  </div>
+                  <div class="role-binding-model-line">
+                    <span class="role-binding-display" x-text="roleBindingDisplayTitle(b)"></span>
+                    <span class="role-binding-size" x-show="roleBindingSizeLabel(b)" x-text="roleBindingSizeLabel(b)"></span>
+                  </div>
+                  <div class="role-binding-path-row" x-show="b.model_path">
+                    <span class="role-binding-path" :title="b.model_path" x-text="b.model_path"></span>
+                    <button type="button" class="btn btn-ghost" style="font-size:.62rem;padding:3px 8px"
+                            @click="copyModelPath(b.model_path)" title="Copy container path">Copy</button>
+                  </div>
+                  <div class="role-binding-controls">
+                    <select class="slot-model-select role-binding-select"
+                            x-model="roleBindingSelections[b.alias]"
+                            :aria-label="'Select model for ' + b.alias">
+                      <option value="">— choose installed model —</option>
+                      <template x-for="opt in getRoleModelOptions(b.alias)" :key="opt.value">
+                        <option :value="opt.value" x-text="opt.label"></option>
+                      </template>
+                    </select>
+                    <div class="role-binding-footer">
+                      <label class="role-binding-toggle">
+                        <input type="checkbox" x-model="roleBindingShowAll[b.alias]">
+                        <span class="role-toggle-track"></span>
+                        <span>Show all models</span>
+                      </label>
+                    </div>
+                  </div>
+                  <div class="role-binding-error" x-show="roleBindingErrors[b.alias]" x-text="roleBindingErrors[b.alias]"></div>
+                </div>
+              </template>
+            </div>
+            <div class="role-bindings-source" x-show="roleBindingsSourceLabel() && roleBindings.length"
+                 x-text="'Data source: ' + roleBindingsSourceLabel() + (roleBindingsSource === 'preset' ? ' (router offline or unreachable)' : '')"></div>
+          </div>
+        </div>
+
+        <!-- ─── VRAM Budget (before compute when GPU present) ── -->
+        <template x-if="hasGPU">
+          <div class="section">
+            <div class="section-head">
+              <div class="section-title">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><path d="M1 10h22"/><path d="M12 4v16"/></svg>
+                VRAM Budget
+              </div>
+              <div class="section-meta" x-text="vramBudget.freeGB + ' GB free'"></div>
+            </div>
+            <div class="section-body">
+              <div class="vram-stacked-wrap">
+                <div class="vram-stacked-label" x-text="gpus[0]?.name + ' — ' + fmtMB(gpus[0]?.total_vram_mb)"></div>
+                <div class="vram-stacked-bar">
+                  <template x-for="seg in vramBudget.segments" :key="seg.label">
+                    <div class="vram-seg"
+                         :style="'width:' + seg.pct + '%;background:' + seg.color"
+                         :title="seg.label + ': ' + seg.gb.toFixed(1) + ' GB'"
+                         x-show="seg.pct > 0.5">
+                      <span class="vram-seg-text" x-show="seg.pct > 8" x-text="seg.short"></span>
+                    </div>
+                  </template>
+                  <div class="vram-seg vram-seg-free"
+                       :style="'width:' + vramBudget.freePct + '%'"
+                       :title="'Free: ' + vramBudget.freeGB + ' GB'">
+                    <span class="vram-seg-text" x-show="vramBudget.freePct > 8"
+                          x-text="vramBudget.freeGB + ' GB free'"></span>
+                  </div>
+                </div>
+                <template x-if="vramBudget.usedPct > 90">
+                  <div class="vram-warn-badge">⚠ VRAM usage above 90% — risk of OOM</div>
+                </template>
+              </div>
+              <div class="vram-breakdown">
+                <template x-for="seg in vramBudget.segments" :key="seg.label">
+                  <div class="vram-row">
+                    <span class="vram-row-dot" :style="'background:' + seg.color"></span>
+                    <span class="vram-row-label" x-text="seg.label"></span>
+                    <span class="vram-row-val" x-text="seg.gb.toFixed(1) + ' GB'"></span>
+                    <span class="vram-row-pct" x-text="seg.pct.toFixed(0) + '%'"></span>
+                  </div>
+                </template>
+                <div class="vram-row vram-row-free">
+                  <span class="vram-row-dot" style="background:var(--border-soft)"></span>
+                  <span class="vram-row-label">Free</span>
+                  <span class="vram-row-val" x-text="vramBudget.freeGB + ' GB'"></span>
+                  <span class="vram-row-pct" x-text="vramBudget.freePct.toFixed(0) + '%'"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+
         <!-- ─── Compute section ──────────────────────────────── -->
         <div class="section">
           <div class="section-head">
@@ -460,153 +697,21 @@
           </div>
         </div>
 
-        <!-- ─── Fleet Mode Banner ──────────────────────────────── -->
-        <div class="fleet-mode-banner">
-          <div>
-            <span class="fleet-mode-label">Fleet mode</span>
-            <span class="fleet-mode-value"
-                  :class="'fleet-mode-' + (fleetMode.mode || 'unknown')"
-                  x-text="(fleetMode.mode || 'unknown').replace('_', '-').toUpperCase()"></span>
-          </div>
-          <div class="fleet-mode-note"
-               x-text="fleetMode.mode === 'conflict'
-                 ? 'Router and 3-slot containers are both running; stop one stack before ignite.'
-                 : fleetMode.mode === 'router'
-                   ? 'Native llama.cpp Router Mode is active.'
-                   : fleetMode.mode === 'three_slot'
-                     ? 'Legacy 3-slot fleet is active.'
-                     : 'No llama.cpp fleet detected yet.'"></div>
-        </div>
-
-        <!-- ─── Role Bindings ──────────────────────────────────── -->
-        <div class="section">
-          <div class="section-head">
-            <div class="section-title">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
-              Role Bindings
-            </div>
-            <div class="section-meta">chat / utility / embedding aliases</div>
-            <button class="btn btn-ghost" style="margin-left:auto" @click="_fetchRoleBindings()">Refresh</button>
-          </div>
-          <div class="section-body">
-            <template x-if="!roleBindings.length">
-              <div class="empty-state">No router role bindings detected yet.</div>
-            </template>
-            <template x-for="b in roleBindings" :key="b.alias">
-              <div>
-                <div class="role-binding-row">
-                  <div>
-                    <div class="role-binding-title">
-                      <span class="role-dot" :class="b.alias"></span><span x-text="b.alias"></span>
-                    </div>
-                    <div class="role-binding-meta">
-                      <span class="role-chip" :class="b.loaded ? 'loaded' : ''" x-text="b.loaded ? ('LOADED :' + (b.port || '?')) : 'AUTOLOAD'"></span>
-                      <span class="role-chip" x-show="b.ctx_size" x-text="'ctx ' + b.ctx_size"></span>
-                    </div>
-                  </div>
-                  <div>
-                    <div class="role-binding-current" :title="b.model_path" x-text="b.model_filename || b.model_path || '(not set)'"></div>
-                    <div class="role-binding-meta">
-                      <span class="role-chip" x-text="b.model_path || 'no path'"></span>
-                    </div>
-                  </div>
-                  <div>
-                    <select class="slot-model-select"
-                            x-model="roleBindingSelections[b.alias]">
-                      <option value="">-- select installed model --</option>
-                      <template x-for="opt in getRoleModelOptions(b.alias)" :key="opt.value">
-                        <option :value="opt.value" x-text="opt.label"></option>
-                      </template>
-                    </select>
-                    <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:.68rem;color:var(--muted)">
-                      <input type="checkbox" x-model="roleBindingShowAll[b.alias]">
-                      show all
-                    </label>
-                  </div>
-                  <div class="role-binding-actions">
-                    <button class="btn btn-primary slot-assign-btn"
-                            @click="setRoleAliasModel(b.alias, roleBindingSelections[b.alias])"
-                            :disabled="!roleBindingSelections[b.alias] || roleBindingSelections[b.alias] === b.model_path || roleBindingUpdating[b.alias]"
-                            x-text="roleBindingUpdating[b.alias] ? 'restarting...' : 'Apply'"></button>
-                    <span class="spin" x-show="roleBindingUpdating[b.alias]">⟳</span>
-                  </div>
-                </div>
-                <div class="role-binding-error" x-show="roleBindingErrors[b.alias]" x-text="roleBindingErrors[b.alias]"></div>
-              </div>
-            </template>
-          </div>
-        </div>
-
-        <!-- ─── VRAM Budget Visualizer ────────────────────────── -->
-        <template x-if="hasGPU">
-          <div class="section">
-            <div class="section-head">
-              <div class="section-title">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><path d="M1 10h22"/><path d="M12 4v16"/></svg>
-                VRAM Budget
-              </div>
-              <div class="section-meta" x-text="vramBudget.freeGB + ' GB free'"></div>
-            </div>
-            <div class="section-body">
-              <!-- Stacked bar -->
-              <div class="vram-stacked-wrap">
-                <div class="vram-stacked-label" x-text="gpus[0]?.name + ' — ' + fmtMB(gpus[0]?.total_vram_mb)"></div>
-                <div class="vram-stacked-bar">
-                  <template x-for="seg in vramBudget.segments" :key="seg.label">
-                    <div class="vram-seg"
-                         :style="'width:' + seg.pct + '%;background:' + seg.color"
-                         :title="seg.label + ': ' + seg.gb.toFixed(1) + ' GB'"
-                         x-show="seg.pct > 0.5">
-                      <span class="vram-seg-text" x-show="seg.pct > 8" x-text="seg.short"></span>
-                    </div>
-                  </template>
-                  <div class="vram-seg vram-seg-free"
-                       :style="'width:' + vramBudget.freePct + '%'"
-                       :title="'Free: ' + vramBudget.freeGB + ' GB'">
-                    <span class="vram-seg-text" x-show="vramBudget.freePct > 8"
-                          x-text="vramBudget.freeGB + ' GB free'"></span>
-                  </div>
-                </div>
-                <!-- Warning badge -->
-                <template x-if="vramBudget.usedPct > 90">
-                  <div class="vram-warn-badge">⚠ VRAM usage above 90% — risk of OOM</div>
-                </template>
-              </div>
-              <!-- Breakdown table -->
-              <div class="vram-breakdown">
-                <template x-for="seg in vramBudget.segments" :key="seg.label">
-                  <div class="vram-row">
-                    <span class="vram-row-dot" :style="'background:' + seg.color"></span>
-                    <span class="vram-row-label" x-text="seg.label"></span>
-                    <span class="vram-row-val" x-text="seg.gb.toFixed(1) + ' GB'"></span>
-                    <span class="vram-row-pct" x-text="seg.pct.toFixed(0) + '%'"></span>
-                  </div>
-                </template>
-                <div class="vram-row vram-row-free">
-                  <span class="vram-row-dot" style="background:var(--border-soft)"></span>
-                  <span class="vram-row-label">Free</span>
-                  <span class="vram-row-val" x-text="vramBudget.freeGB + ' GB'"></span>
-                  <span class="vram-row-pct" x-text="vramBudget.freePct.toFixed(0) + '%'"></span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </template>
-
-        <!-- ─── Slots section ────────────────────────────────── -->
-        <div class="section">
-          <div class="section-head">
+        <!-- ─── Slots section (collapsed when Router Mode is primary) ─ -->
+        <details class="section section-collapsible" :open="!isRouterPrimaryUI">
+          <summary class="section-head">
             <div class="section-title">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
               llama.cpp Slots
             </div>
             <div class="section-meta" x-text="runningSlots + ' / ' + totalSlots + ' running'"></div>
-            <button class="btn btn-accent"
-                    @click="igniteFleet()"
+            <span class="section-collapsible-hint" x-show="isRouterPrimaryUI">legacy — Role Bindings above</span>
+            <button class="btn btn-accent" type="button"
+                    @click.stop="igniteFleet()"
                     :disabled="igniteState === 'pending'"
                     x-text="igniteState === 'pending' ? 'Checking…' : igniteState === 'ok' ? '✓ Fleet Healthy' : 'Verify Fleet'"
                     title="Probe every configured slot and tell you what to do next"></button>
-          </div>
+          </summary>
           <div class="section-body">
 
             <!-- Host-side ignition row -->
@@ -838,7 +943,7 @@
               <button class="btn btn-ghost"   @click="refresh()">Refresh</button>
             </div>
           </div>
-        </div>
+        </details>
 
         <!-- ─── Model Library ──────────────────────────────────── -->
         <div class="section">
