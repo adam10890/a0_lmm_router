@@ -57,14 +57,24 @@ class SetRouterAliasModel(ApiHandler):
             }
 
         restart_result = fleet_models.restart_router()
+        restart_ok = bool(restart_result.get("ok"))
+        partial = not restart_ok and bool(write_result.get("ok"))
         return {
-            "ok": bool(restart_result.get("ok")),
+            "ok": bool(write_result.get("ok")) and (restart_ok or partial),
+            "partial": partial,
             "slot_id": slot_id,
             "alias": alias,
             "model_path": model_path,
             "snippet": write_result.get("snippet", ""),
             "backup_path": write_result.get("backup_path", ""),
+            "preset_via": write_result.get("via", ""),
             "restart": restart_result,
-            "restarting": True,
-            "error": restart_result.get("error") if not restart_result.get("ok") else "",
+            "restarting": restart_ok,
+            "error": restart_result.get("error") if not restart_ok else "",
+            "warning": (
+                "Preset saved. Restart host helper (start_agent_zero.bat) or run "
+                "`docker restart a0-llama-router` to apply the new chat model."
+                if partial
+                else ""
+            ),
         }

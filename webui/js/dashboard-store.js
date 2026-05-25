@@ -601,17 +601,24 @@ function createDashboardStore() {
           model_path: modelPath,
         });
         if (!d.ok) {
-          this.roleBindingErrors[alias] = d.error || 'Failed to update alias';
+          const err = d.error || d.warning || 'Failed to update alias';
+          this.roleBindingErrors[alias] = err;
           this.roleBindingUpdating[alias] = false;
-          this.showToast(d.error || 'Failed to update alias', 'err');
+          this.showToast(err, 'err', 10000);
           return;
+        }
+        if (d.partial || d.warning) {
+          this.roleBindingErrors[alias] = d.warning || 'Preset saved — restart router to apply';
+          this.showToast(d.warning || 'Preset saved — restart router to apply', 'warn', 12000);
         }
         setTimeout(async () => {
           await this._fetchRoleBindings();
           await this._fetchStats();
-          this.roleBindingJustApplied[alias] = true;
-          this.showToast(`${alias} binding updated`, 'ok');
-          setTimeout(() => { this.roleBindingJustApplied[alias] = false; }, 6000);
+          if (!d.partial) {
+            this.roleBindingJustApplied[alias] = true;
+            this.showToast(`${alias} binding updated`, 'ok');
+            setTimeout(() => { this.roleBindingJustApplied[alias] = false; }, 6000);
+          }
         }, 3000);
         setTimeout(() => { this.roleBindingUpdating[alias] = false; }, 8000);
       } catch (e) {
@@ -623,7 +630,8 @@ function createDashboardStore() {
 
     showToast(message, type = 'info', durationMs = 5000) {
       const id = ++this._toastSeq;
-      this.toasts = [...this.toasts, { id, message, type }];
+      // Single active toast avoids overlapping status lines in the sticky stack.
+      this.toasts = [{ id, message, type }];
       setTimeout(() => {
         this.toasts = this.toasts.filter(t => t.id !== id);
       }, durationMs);

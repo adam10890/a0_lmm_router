@@ -159,17 +159,61 @@ def clear_hf_token() -> dict:
     return _helper_request("DELETE", "/tokens/hf")
 
 
+def _helper_unknown_endpoint(result: dict, path: str) -> bool:
+    err = str(result.get("error") or "")
+    return "unknown endpoint" in err and path in err
+
+
+def _helper_router_capabilities() -> set[str]:
+    """Probe host helper /health for router endpoint support (new helpers only)."""
+    try:
+        url = f"{_HELPER_BASE}/health"
+        with urllib.request.urlopen(url, timeout=3.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        caps = data.get("capabilities") or []
+        return {str(c) for c in caps}
+    except Exception:
+        return set()
+
+
 def write_preset_ini(alias: str, model_path: str, preset_path: str | None = None) -> dict:
     """Rewrite one alias model line in the router preset on the host."""
     body = {"alias": alias, "model_path": model_path}
     if preset_path:
         body["preset_path"] = preset_path
-    return _helper_request("POST", "/router/write_preset_ini", body, timeout=30)
+
+    caps = _helper_router_capabilities()
+    if not caps or "router/write_preset_ini" in caps:
+        result = _helper_request("POST", "/router/write_preset_ini", body, timeout=30)
+        if result.get("ok") or not _helper_unknown_endpoint(result, "/router/write_preset_ini"):
+            if result.get("ok"):
+                result["via"] = "host_helper"
+            return result
+
+    try:
+        from helpers.preset_ini import write_alias_model
+    except ImportError:
+        from usr.plugins.a0_lmm_router.helpers.preset_ini import write_alias_model  # type: ignore
+
+    local = write_alias_model(alias=alias, model_path=model_path, preset_path=preset_path)
+    if local.get("ok"):
+        local["host_helper_stale"] = "router/write_preset_ini" not in caps
+    return local
 
 
 def restart_router() -> dict:
     """Restart the single llama.cpp router container."""
-    return _helper_request("POST", "/router/restart", timeout=90)
+    caps = _helper_router_capabilities()
+    if not caps or "router/restart" in caps:
+        result = _helper_request("POST", "/router/restart", timeout=90)
+        if result.get("ok") or not _helper_unknown_endpoint(result, "/router/restart"):
+            return result
+
+    return {
+        "ok": False,
+        "error": "host helper is outdated (missing /router/restart). Re-run start_agent_zero.bat to restart the helper, then run: docker restart a0-llama-router",
+        "host_helper_stale": True,
+    }
 
 
 def fleet_upgrade() -> dict:

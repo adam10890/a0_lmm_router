@@ -1197,7 +1197,15 @@ class Handler(BaseHTTPRequestHandler):
 
         # Public health check (no token)
         if parsed.path == "/health":
-            self._send_json(200, {"ok": True, "service": "lmm_host_helper"})
+            self._send_json(200, {
+                "ok": True,
+                "service": "lmm_host_helper",
+                "version": 2,
+                "capabilities": [
+                    "router/write_preset_ini",
+                    "router/restart",
+                ],
+            })
             return
 
         # All other GET endpoints require token
@@ -1235,7 +1243,15 @@ class Handler(BaseHTTPRequestHandler):
 
         # /health is allowed without token (public health check)
         if parsed.path == "/health":
-            self._send_json(200, {"ok": True, "service": "lmm_host_helper"})
+            self._send_json(200, {
+                "ok": True,
+                "service": "lmm_host_helper",
+                "version": 2,
+                "capabilities": [
+                    "router/write_preset_ini",
+                    "router/restart",
+                ],
+            })
             return
 
         # All other endpoints require token
