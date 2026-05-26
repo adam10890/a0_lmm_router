@@ -31,7 +31,11 @@ def _get_manager():
 
 
 def _slot_url(role: str, fallback_port_map: dict[str, int] | None = None) -> str | None:
-    """Return the base v1 URL for a slot by role, using failover if needed."""
+    """Return the base v1 URL for a slot by role, using failover if needed.
+
+    Synchronous. Used by get_embeddings and any non-async callers.
+    chat_complete uses select_slot_with_failover_async instead.
+    """
     mgr = _get_manager()
 
     # select_slot_with_failover returns a decision dict with 'url'
@@ -41,12 +45,22 @@ def _slot_url(role: str, fallback_port_map: dict[str, int] | None = None) -> str
         if url:
             return url
 
-    # Fallback: try lmm_hosts from global config
+    return _config_fallback_url(role, fallback_port_map)
+
+
+def _config_fallback_url(
+    role: str, fallback_port_map: dict[str, int] | None = None
+) -> str | None:
+    """Return URL for role from lmm_hosts config or static port map.
+
+    Does not perform any health probe. Used as a last resort when
+    slot selection returns no healthy slot.
+    """
+    mgr = _get_manager()
     hosts: dict[str, str] = mgr.global_config.get("lmm_hosts", {})
     if role in hosts:
         return f"http://{hosts[role]}/v1"
 
-    # Last resort: static port map
     defaults = fallback_port_map or {"chat": 8080, "utility": 8088, "embedding": 8082}
     port = defaults.get(role)
     return f"http://localhost:{port}/v1" if port else None
@@ -59,8 +73,21 @@ async def chat_complete(
     temperature: float = 0.7,
     stream: bool = False,
 ) -> dict[str, Any]:
-    """Forward a chat completion request to the appropriate slot."""
-    url = _slot_url(role)
+    """Forward a chat completion request to the appropriate slot.
+
+    Uses the async routing path so health probes do not block the event loop.
+    The routing decision is computed once; slot_id is reused in error paths.
+    """
+    mgr = _get_manager()
+    decision = await mgr.select_slot_with_failover_async(role)
+
+    if decision:
+        url = decision.get("url", "")
+        slot_id = decision.get("slot_id", f"slot_{role}")
+    else:
+        url = _config_fallback_url(role) or ""
+        slot_id = f"slot_{role}"
+
     if not url:
         return {"error": f"No healthy slot found for role '{role}'"}
 
@@ -81,12 +108,10 @@ async def chat_complete(
             ) as resp:
                 data = await resp.json()
                 if resp.status != 200:
-                    _get_manager().mark_slot_error(
-                        _decision_slot_id(role), f"HTTP {resp.status}"
-                    )
+                    mgr.mark_slot_error(slot_id, f"HTTP {resp.status}")
                 return data
     except aiohttp.ClientError as exc:
-        _get_manager().mark_slot_error(_decision_slot_id(role), str(exc))
+        mgr.mark_slot_error(slot_id, str(exc))
         return {"error": str(exc)}
 
 

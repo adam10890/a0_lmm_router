@@ -1257,6 +1257,86 @@ class BackendManager:
 
         return self._health_checker.check(config)
 
+    async def _get_slot_health_async(self, slot_id: str) -> str:
+        """Async version of _get_slot_health. Does not block the event loop."""
+        if slot_id in self._cooldown_tracker.get_error_slots():
+            return 'unhealthy'
+
+        if not self._backend:
+            return 'unknown'
+
+        config = self._slot_configs.get(slot_id)
+        if not config:
+            return 'unknown'
+
+        return await self._health_checker.check_async(config)
+
+    async def select_slot_with_failover_async(
+        self, role: str, preferred_slot: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Async version of select_slot_with_failover. Does not block the event loop.
+
+        Preserves identical chain-walking, cooldown, and preferred_slot logic.
+        The sync select_slot_with_failover() is unchanged and still works.
+        """
+        from usr.plugins.a0_lmm_router.helpers.smart_router.failover import (
+            get_chain_for_role, get_next_in_chain, create_decision,
+        )
+        from usr.plugins.a0_lmm_router.helpers.stats_tracker import record_failover
+
+        chain = get_chain_for_role(role, self._failover_chains)
+        start_slot = preferred_slot or (chain[0] if chain else None)
+        if not start_slot:
+            return None
+
+        slot_status = await self._get_slot_health_async(start_slot)
+
+        if slot_status == 'healthy':
+            config = self._slot_configs.get(start_slot)
+            if config:
+                url = self._get_slot_url(start_slot, config)
+                return create_decision(
+                    slot_id=start_slot,
+                    url=url,
+                    role=role,
+                    reason=f"primary slot for role '{role}'",
+                    chain=chain,
+                ).__dict__
+
+        current = start_slot
+        reason = (
+            f"primary slot '{start_slot}' unhealthy"
+            if slot_status == 'unhealthy'
+            else f"primary slot '{start_slot}' not found"
+        )
+
+        while current:
+            next_slot = get_next_in_chain(current, chain)
+            if not next_slot:
+                break
+
+            slot_status = await self._get_slot_health_async(next_slot)
+            if slot_status == 'healthy':
+                config = self._slot_configs.get(next_slot)
+                if config:
+                    url = self._get_slot_url(next_slot, config)
+                    record_failover(start_slot, next_slot, reason)
+                    return create_decision(
+                        slot_id=next_slot,
+                        url=url,
+                        role=role,
+                        reason=f"failover from '{start_slot}' to '{next_slot}'",
+                        chain=chain,
+                    ).__dict__
+
+            current = next_slot
+            reason = f"slot '{current}' unhealthy, continuing chain"
+
+        self.logger.warning(
+            "Async failover chain exhausted for role '%s', no healthy slots", role
+        )
+        return None
+
     def _get_slot_url(self, slot_id: str, config: Dict[str, Any]) -> str:
         """Get the full API URL for a slot."""
         port = config.get('port', 8080)

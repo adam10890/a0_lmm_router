@@ -276,3 +276,118 @@ class TestBackendManagerHealthIntegration:
         )
         manager = BackendManager(str(cfg))
         assert manager._health_checker.timeout == 7
+
+
+# ---------------------------------------------------------------------------
+# check_async tests (all inject async_probe_fn — no real network)
+# ---------------------------------------------------------------------------
+
+class TestSlotHealthCheckerAsync:
+    def _make_async_checker(self, async_probe_fn):
+        from usr.plugins.a0_lmm_router.helpers.smart_router.health import SlotHealthChecker
+        return SlotHealthChecker(timeout=1, async_probe_fn=async_probe_fn)
+
+    def test_check_async_healthy_on_ok_probe(self):
+        import asyncio
+
+        async def ok_probe(url, timeout):
+            return {"ok": True, "http_status": 200}
+
+        checker = self._make_async_checker(ok_probe)
+        result = asyncio.run(checker.check_async({"host": "h", "port": 8080}))
+        assert result == "healthy"
+
+    def test_check_async_unhealthy_on_fail_probe(self):
+        import asyncio
+
+        async def fail_probe(url, timeout):
+            return {"ok": False, "http_status": 503}
+
+        result = asyncio.run(
+            self._make_async_checker(fail_probe).check_async({"host": "h", "port": 8080})
+        )
+        assert result == "unhealthy"
+
+    def test_check_async_unhealthy_on_connection_error(self):
+        import asyncio
+
+        async def error_probe(url, timeout):
+            return {"ok": False, "error": "connection refused"}
+
+        result = asyncio.run(
+            self._make_async_checker(error_probe).check_async({"host": "h", "port": 8080})
+        )
+        assert result == "unhealthy"
+
+    def test_check_async_unknown_when_port_missing(self):
+        import asyncio
+
+        async def ok_probe(url, timeout):
+            return {"ok": True}
+
+        result = asyncio.run(
+            self._make_async_checker(ok_probe).check_async({"host": "localhost"})
+        )
+        assert result == "unknown"
+
+    def test_check_async_timeout_passed_through(self):
+        import asyncio
+
+        received = {}
+
+        async def capture_probe(url, timeout):
+            received["timeout"] = timeout
+            return {"ok": True}
+
+        from usr.plugins.a0_lmm_router.helpers.smart_router.health import SlotHealthChecker
+        checker = SlotHealthChecker(timeout=9, async_probe_fn=capture_probe)
+        asyncio.run(checker.check_async({"host": "h", "port": 1234}))
+        assert received["timeout"] == 9
+
+    def test_check_async_url_constructed_correctly(self):
+        import asyncio
+
+        received = {}
+
+        async def capture_probe(url, timeout):
+            received["url"] = url
+            return {"ok": True}
+
+        asyncio.run(
+            self._make_async_checker(capture_probe).check_async({"host": "myhost", "port": 7777})
+        )
+        assert received["url"] == "http://myhost:7777/health"
+
+    def test_check_async_raising_probe_returns_unhealthy(self):
+        import asyncio
+
+        async def exploding_probe(url, timeout):
+            raise ConnectionError("ECONNREFUSED")
+
+        result = asyncio.run(
+            self._make_async_checker(exploding_probe).check_async({"host": "h", "port": 8080})
+        )
+        assert result == "unhealthy"
+
+    def test_check_async_raising_probe_does_not_propagate(self):
+        import asyncio
+
+        async def exploding_probe(url, timeout):
+            raise RuntimeError("unexpected crash")
+
+        # Must not raise
+        asyncio.run(
+            self._make_async_checker(exploding_probe).check_async({"host": "h", "port": 8080})
+        )
+
+    def test_check_async_malformed_response_returns_unhealthy(self):
+        import asyncio
+
+        async def malformed_probe(url, timeout):
+            # ok key missing entirely
+            return {"http_status": 200}
+
+        result = asyncio.run(
+            self._make_async_checker(malformed_probe).check_async({"host": "h", "port": 8080})
+        )
+        assert result == "unhealthy"
