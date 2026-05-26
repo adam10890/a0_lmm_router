@@ -20,12 +20,14 @@ try:
     from usr.plugins.a0_lmm_router.helpers.router_context import (
         estimate_extras_tokens,
         history_token_budget,
+        is_local_fleet_chat_active,
         resolve_router_ctx_limit,
     )
 except ImportError:
     from helpers.router_context import (  # type: ignore[no-redef]
         estimate_extras_tokens,
         history_token_budget,
+        is_local_fleet_chat_active,
         resolve_router_ctx_limit,
     )
 
@@ -42,9 +44,10 @@ class RouterContextGuard(Extension):
         except ImportError:
             return
 
-        cfg = get_chat_model_config(self.agent)
-        if str(cfg.get("provider", "")).lower() != "lmm_router":
+        if not is_local_fleet_chat_active(self.agent):
             return
+
+        cfg = get_chat_model_config(self.agent)
 
         system_text = "\n\n".join(loop_data.system or [])
         system_tokens = tokens.approximate_prompt_tokens(system_text)

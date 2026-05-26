@@ -10,17 +10,91 @@ from typing import Any
 
 log = logging.getLogger("a0_lmm_router.router_context")
 
+# Preset names that enable router context guard (override via A0_LMM_ROUTER_PRESET_NAMES).
+DEFAULT_LOCAL_FLEET_PRESET_NAMES = ("Local Fleet (llama.cpp RTX 4090)",)
+
 DEFAULT_ROUTER_CTX = 65536
 RESPONSE_TOKEN_RESERVE = 8192
 EXTRAS_TEMPLATE_RESERVE = 2048
 PROMPT_SAFETY_RATIO = 0.90
 
 
+def local_fleet_preset_names() -> tuple[str, ...]:
+    raw = os.environ.get("A0_LMM_ROUTER_PRESET_NAMES", "").strip()
+    if raw:
+        return tuple(n.strip() for n in raw.split(",") if n.strip())
+    return DEFAULT_LOCAL_FLEET_PRESET_NAMES
+
+
 def _normalize_api_base(api_base: str) -> str:
-    base = (api_base or "http://host.docker.internal:8080/v1").rstrip("/")
+    base = (api_base or "http://host.docker.internal:8080/v1").strip().rstrip("/").lower()
+    for prefix in ("http://127.0.0.1:8080", "http://localhost:8080"):
+        if base.startswith(prefix):
+            base = "http://host.docker.internal:8080" + base[len(prefix) :]
+            break
     if not base.endswith("/v1"):
-        base = f"{base}/v1" if base.endswith("/") else f"{base}/v1"
+        base = f"{base}/v1" if base else "http://host.docker.internal:8080/v1"
     return base
+
+
+def _chat_signature(chat_cfg: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(chat_cfg.get("provider", "")).lower(),
+        str(chat_cfg.get("name", "")).lower(),
+        _normalize_api_base(str(chat_cfg.get("api_base", ""))),
+    )
+
+
+def _local_fleet_chat_signature() -> tuple[str, str, str] | None:
+    try:
+        from plugins._model_config.helpers.model_config import get_preset_by_name
+    except ImportError:
+        return None
+
+    for preset_name in local_fleet_preset_names():
+        preset = get_preset_by_name(preset_name)
+        if not preset:
+            continue
+        chat = preset.get("chat")
+        if isinstance(chat, dict) and str(chat.get("provider", "")).lower() == "lmm_router":
+            return _chat_signature(chat)
+    return None
+
+
+def is_local_fleet_chat_active(agent: Any) -> bool:
+    """True only when the active chat model is the Local Fleet router preset.
+
+    Per-chat preset override (model switcher) or global Settings matching that
+    preset's chat slot. Any other preset/provider leaves A0's built-in compression.
+    """
+    if not agent:
+        return False
+
+    try:
+        from plugins._model_config.helpers.model_config import (
+            get_chat_model_config,
+            get_preset_by_name,
+        )
+    except ImportError:
+        return False
+
+    fleet_sig = _local_fleet_chat_signature()
+    if not fleet_sig:
+        return False
+
+    override = agent.context.get_data("chat_model_override") if agent.context else None
+    if isinstance(override, dict) and override.get("preset_name"):
+        preset_name = str(override["preset_name"])
+        if preset_name in local_fleet_preset_names():
+            return True
+        preset = get_preset_by_name(preset_name)
+        if preset:
+            chat = preset.get("chat")
+            if isinstance(chat, dict) and _chat_signature(chat) == fleet_sig:
+                return True
+        return False
+
+    return _chat_signature(get_chat_model_config(agent)) == fleet_sig
 
 
 def fetch_router_model_ctx(model_name: str, api_base: str, timeout: float = 3.0) -> int | None:

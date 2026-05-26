@@ -5,13 +5,17 @@ import sys
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
-if str(PLUGIN_ROOT) not in sys.path:
-    sys.path.insert(0, str(PLUGIN_ROOT))
+HELPERS_ROOT = PLUGIN_ROOT / "helpers"
+if str(HELPERS_ROOT) not in sys.path:
+    sys.path.insert(0, str(HELPERS_ROOT))
 
-from helpers.router_context import (
+from router_context import (  # noqa: E402
     EXTRAS_TEMPLATE_RESERVE,
     RESPONSE_TOKEN_RESERVE,
+    _chat_signature,
+    _normalize_api_base,
     history_token_budget,
+    is_local_fleet_chat_active,
     resolve_router_ctx_limit,
 )
 
@@ -42,3 +46,24 @@ def test_resolve_router_ctx_falls_back_to_cfg():
 def test_constants_sane():
     assert RESPONSE_TOKEN_RESERVE > 0
     assert EXTRAS_TEMPLATE_RESERVE > 0
+
+
+def test_normalize_api_base_aliases():
+    assert _normalize_api_base("http://127.0.0.1:8080/v1") == _normalize_api_base(
+        "http://host.docker.internal:8080/v1"
+    )
+
+
+def test_chat_signature_local_fleet_shape():
+    sig = _chat_signature(
+        {
+            "provider": "lmm_router",
+            "name": "chat",
+            "api_base": "http://host.docker.internal:8080/v1",
+        }
+    )
+    assert sig == ("lmm_router", "chat", "http://host.docker.internal:8080/v1")
+
+
+def test_is_local_fleet_inactive_without_agent():
+    assert is_local_fleet_chat_active(None) is False

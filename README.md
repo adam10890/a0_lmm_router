@@ -1209,7 +1209,7 @@ The plugin now includes analysis of `tiny_router` (see `_SYSTEM_MAP.html` Append
 
 Agent Zero compresses **history only** against `ctx_length × ctx_history` *before* the system prompt is built. With `lmm_router`, llama.cpp enforces a **hard** `n_ctx` on the full request (system + history + extras + completion).
 
-**Fix (v1.3+):** extension `message_loop_prompts_after/_20_router_context_guard.py`:
+**Fix (v1.3+):** extension `message_loop_prompts_after/_20_router_context_guard.py` runs **only** when the active chat model is the **Local Fleet (llama.cpp RTX 4090)** preset (global Settings or per-chat model switcher). All other presets use Agent Zero’s built-in history compression only.
 
 1. Reads live `n_ctx` from router `GET /v1/models` (fallback: `ROUTER_CTX_SIZE`, slot config, preset `ctx_length`).
 2. After the system prompt is assembled, computes a history budget:  
