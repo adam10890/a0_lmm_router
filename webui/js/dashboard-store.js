@@ -72,10 +72,15 @@ function createDashboardStore() {
     slotErrors: {},            // keyed by slot_id — error message from last assign/load
     fleetMode: { mode: 'unknown', router_running: false, three_slot_running: false, containers: {} },
     roleBindings: [],
+    roleBindingsSource: '',
+    roleBindingsError: '',
     roleBindingSelections: {},
     roleBindingShowAll: {},
     roleBindingUpdating: {},
     roleBindingErrors: {},
+    roleBindingJustApplied: {},
+    toasts: [],
+    _toastSeq: 0,
 
     // Fleet ignition state
     igniteState: 'idle',      // idle | pending | ok | needs_host | error
@@ -535,28 +540,60 @@ function createDashboardStore() {
     async _fetchRoleBindings() {
       try {
         const d = await _a0ApiCall(ENDPOINTS.routerAliases, { slot_id: 'slot_router' });
-        if (!d.ok) return;
+        if (!d.ok) {
+          this.roleBindingsError = d.error || 'Role bindings unavailable';
+          return;
+        }
+        this.roleBindingsError = '';
         this.roleBindings = d.roles || [];
+        this.roleBindingsSource = d.source || '';
         if (d.models && Object.keys(d.models).length) {
           this.installedModels = d.models;
         }
+        this._syncRoleBindingSelections();
         for (const binding of this.roleBindings) {
-          if (!this.roleBindingSelections[binding.alias]) {
-            this.roleBindingSelections[binding.alias] = binding.model_path || '';
-          }
           for (const slot of this.slots || []) {
             if (slot.role === binding.alias && slot._ctxSlider === undefined && binding.ctx_size) {
               slot._ctxSlider = binding.ctx_size;
             }
           }
         }
-      } catch (_) { /* silent */ }
+      } catch (e) {
+        this.roleBindingsError = e.message || 'Connection failed';
+      }
+    },
+
+    _syncRoleBindingSelections() {
+      for (const binding of this.roleBindings || []) {
+        const current = this.normalizeModelPath(binding.model_path || '');
+        const options = this.getRoleModelOptions(binding.alias);
+        const match = options.find(o => this.pathsMatch(o.value, current));
+        this.roleBindingSelections[binding.alias] = match ? match.value : current;
+      }
+    },
+
+    normalizeModelPath(path) {
+      if (!path) return '';
+      let p = String(path).trim().replaceAll('\\', '/');
+      while (p.startsWith('//')) p = p.slice(1);
+      if (p && !p.startsWith('/')) p = '/models/' + p.replace(/^\/+/, '');
+      return p.replace(/\/+/g, '/');
+    },
+
+    pathsMatch(a, b) {
+      const na = this.normalizeModelPath(a);
+      const nb = this.normalizeModelPath(b);
+      if (!na || !nb) return false;
+      if (na === nb) return true;
+      return na.split('/').pop() === nb.split('/').pop();
     },
 
     async setRoleAliasModel(alias, modelPath) {
       if (!alias || !modelPath) return;
       this.roleBindingUpdating[alias] = true;
       this.roleBindingErrors[alias] = '';
+      this.roleBindingJustApplied[alias] = false;
+      this.showToast(`Updating ${alias} model — restarting router…`, 'info', 12000);
       try {
         const d = await _a0ApiCall(ENDPOINTS.setRouterAliasModel, {
           slot_id: 'slot_router',
@@ -564,16 +601,60 @@ function createDashboardStore() {
           model_path: modelPath,
         });
         if (!d.ok) {
-          this.roleBindingErrors[alias] = d.error || 'Failed to update alias';
+          const err = d.error || d.warning || 'Failed to update alias';
+          this.roleBindingErrors[alias] = err;
           this.roleBindingUpdating[alias] = false;
+          this.showToast(err, 'err', 10000);
           return;
         }
-        setTimeout(() => this._fetchRoleBindings(), 3000);
+        if (d.partial || d.warning) {
+          this.roleBindingErrors[alias] = d.warning || 'Preset saved — restart router to apply';
+          this.showToast(d.warning || 'Preset saved — restart router to apply', 'warn', 12000);
+        }
+        setTimeout(async () => {
+          await this._fetchRoleBindings();
+          await this._fetchStats();
+          if (!d.partial) {
+            this.roleBindingJustApplied[alias] = true;
+            this.showToast(`${alias} binding updated`, 'ok');
+            setTimeout(() => { this.roleBindingJustApplied[alias] = false; }, 6000);
+          }
+        }, 3000);
         setTimeout(() => { this.roleBindingUpdating[alias] = false; }, 8000);
       } catch (e) {
         this.roleBindingErrors[alias] = e.message || 'Connection failed';
         this.roleBindingUpdating[alias] = false;
+        this.showToast(e.message || 'Connection failed', 'err');
       }
+    },
+
+    showToast(message, type = 'info', durationMs = 5000) {
+      const id = ++this._toastSeq;
+      // Single active toast avoids overlapping status lines in the sticky stack.
+      this.toasts = [{ id, message, type }];
+      setTimeout(() => {
+        this.toasts = this.toasts.filter(t => t.id !== id);
+      }, durationMs);
+    },
+
+    async copyModelPath(path) {
+      const text = path || '';
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+        this.showToast('Path copied to clipboard', 'ok', 2500);
+      } catch (_) {
+        this.showToast(text, 'info', 8000);
+      }
+    },
+
+    async refreshFleetAndBindings() {
+      this.showToast('Refreshing fleet status…', 'info', 2000);
+      await Promise.all([this._fetchStats(), this._fetchRoleBindings()]);
+    },
+
+    async igniteRouterFleet() {
+      await this.hostAction('ignite');
     },
 
     getSlotModelOptions(slotRole) {
@@ -643,6 +724,111 @@ function createDashboardStore() {
     get runningSlots() { return this.slots.filter(s => s.running).length; },
     get totalSlots()   { return this.slots.length; },
     get hasGPU()       { return this.gpus.length > 0; },
+
+    get hasRouterSlot() {
+      return (this.slots || []).some(s => s.router_mode);
+    },
+
+    get effectiveFleetMode() {
+      const raw = this.fleetMode?.mode || 'unknown';
+      if (raw !== 'unknown' && raw !== 'idle') return raw;
+      if ((this.roleBindings || []).length > 0) {
+        return this.roleBindingsSource === 'live' ? 'router' : 'router_config';
+      }
+      return raw;
+    },
+
+    get isRouterPrimaryUI() {
+      const mode = this.effectiveFleetMode;
+      return mode === 'router' || mode === 'router_config';
+    },
+
+    get fleetModeDisplay() {
+      const mode = this.effectiveFleetMode;
+      if (mode === 'router_config') return 'ROUTER CONFIG';
+      if (mode === 'three_slot') return '3-SLOT';
+      return String(mode || 'unknown').replace('_', '-').toUpperCase();
+    },
+
+    fleetModeBannerClass() {
+      const mode = this.effectiveFleetMode;
+      if (mode === 'conflict') return 'fleet-mode-banner--conflict';
+      if (mode === 'router' || mode === 'router_config') return 'fleet-mode-banner--router';
+      if (mode === 'three_slot') return 'fleet-mode-banner--three_slot';
+      return 'fleet-mode-banner--idle';
+    },
+
+    fleetBannerNote() {
+      const mode = this.effectiveFleetMode;
+      if (mode === 'conflict') {
+        return 'Router and 3-slot containers are both running. Stop one stack before ignite.';
+      }
+      if (mode === 'router') {
+        return 'Native llama.cpp Router Mode is active. Role bindings reflect live /v1/models.';
+      }
+      if (mode === 'router_config') {
+        return 'Router aliases loaded from preset (fleet not detected). Refresh or ignite to verify containers.';
+      }
+      if (mode === 'three_slot') {
+        return 'Legacy 3-slot fleet is active. Use Role Bindings only when Router Mode is enabled.';
+      }
+      return 'No llama.cpp fleet detected. Ignite Router Mode to load chat / utility / embedding aliases.';
+    },
+
+    roleBindingsSourceLabel() {
+      if (this.roleBindingsSource === 'live') return 'live';
+      if (this.roleBindingsSource === 'preset') return 'preset';
+      return '';
+    },
+
+    roleBindingLoadedLabel(binding) {
+      if (!binding) return '';
+      if (!binding.loaded) return 'Autoload';
+      if (binding.port) return `Loaded :${binding.port}`;
+      return 'Loaded';
+    },
+
+    roleBindingDisplayTitle(binding) {
+      if (!binding) return '(not set)';
+      const model = this._findModelByContainerPath(binding.model_path);
+      if (model && model.id && model.id !== binding.model_filename) {
+        return model.id;
+      }
+      const name = binding.model_filename || binding.model_path || '';
+      if (!name) return '(not set)';
+      return name.replace(/\.gguf$/i, '');
+    },
+
+    roleBindingSizeLabel(binding) {
+      const model = this._findModelByContainerPath(binding?.model_path);
+      if (model && model.size_gb) return `${model.size_gb} GB`;
+      return '';
+    },
+
+    roleBindingCtxLabel(binding) {
+      if (!binding?.ctx_size) return '';
+      const ctx = Number(binding.ctx_size);
+      if (ctx >= 1024) return `ctx ${(ctx / 1024).toFixed(0)}K`;
+      return `ctx ${ctx}`;
+    },
+
+    roleBindingApplyDisabled(alias, binding) {
+      const selected = this.roleBindingSelections[alias];
+      if (!selected || this.roleBindingUpdating[alias]) return true;
+      return this.pathsMatch(selected, binding?.model_path);
+    },
+
+    roleBindingApplyClass(alias, binding) {
+      if (this.roleBindingUpdating[alias]) return 'btn btn-primary slot-assign-btn btn-pending';
+      if (this.roleBindingApplyDisabled(alias, binding)) return 'btn btn-ghost slot-assign-btn btn-no-change';
+      return 'btn btn-primary slot-assign-btn btn-ready';
+    },
+
+    roleBindingCardClass(alias) {
+      if (this.roleBindingJustApplied[alias]) return 'role-binding-card role-binding-card--applied';
+      if (this.roleBindingUpdating[alias]) return 'role-binding-card role-binding-card--updating';
+      return 'role-binding-card';
+    },
 
     vramPct(gpu) {
       if (!gpu.total_vram_mb) return 0;

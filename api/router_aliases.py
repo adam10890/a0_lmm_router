@@ -95,6 +95,17 @@ def _binding(alias: str, status: dict | None = None) -> dict:
     }
 
 
+def _apply_slot_defaults(bindings: dict[str, dict], slot_cfg: dict) -> None:
+    """Fill missing router port when alias is loaded but /v1/models omits it."""
+    try:
+        default_port = int(slot_cfg.get("port") or 8080)
+    except (TypeError, ValueError):
+        default_port = 8080
+    for row in bindings.values():
+        if row.get("loaded") and row.get("port") is None:
+            row["port"] = default_port
+
+
 def parse_router_models_payload(payload: dict) -> dict[str, dict]:
     by_alias = {role: _binding(role) for role in ROLES}
     for item in payload.get("data", []) if isinstance(payload, dict) else []:
@@ -148,6 +159,8 @@ class RouterAliases(ApiHandler):
         except Exception:
             source = "preset"
             bindings = _fallback_bindings(slot_cfg)
+
+        _apply_slot_defaults(bindings, slot_cfg)
 
         models_result = fleet_models.list_models()
         return {

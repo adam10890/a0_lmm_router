@@ -77,7 +77,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 DEFAULT_PORT = 55501
 TOKEN_FILENAME = "a0_lmm_host.key"
-COMPOSE_FILE = "usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml"
+COMPOSE_FILE = "usr/plugins/a0_lmm_router/docker/docker-compose.lmm.router.yml"
 RATE_LIMIT_MAX = 30
 RATE_LIMIT_WINDOW_SECONDS = 60
 _rate_limit_hits: dict[str, list[float]] = {}
@@ -1197,7 +1197,15 @@ class Handler(BaseHTTPRequestHandler):
 
         # Public health check (no token)
         if parsed.path == "/health":
-            self._send_json(200, {"ok": True, "service": "lmm_host_helper"})
+            self._send_json(200, {
+                "ok": True,
+                "service": "lmm_host_helper",
+                "version": 2,
+                "capabilities": [
+                    "router/write_preset_ini",
+                    "router/restart",
+                ],
+            })
             return
 
         # All other GET endpoints require token
@@ -1235,7 +1243,15 @@ class Handler(BaseHTTPRequestHandler):
 
         # /health is allowed without token (public health check)
         if parsed.path == "/health":
-            self._send_json(200, {"ok": True, "service": "lmm_host_helper"})
+            self._send_json(200, {
+                "ok": True,
+                "service": "lmm_host_helper",
+                "version": 2,
+                "capabilities": [
+                    "router/write_preset_ini",
+                    "router/restart",
+                ],
+            })
             return
 
         # All other endpoints require token
