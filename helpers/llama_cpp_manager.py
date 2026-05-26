@@ -1101,6 +1101,11 @@ class BackendManager:
         self._failover_states: Dict[str, Any] = {}  # slot_id -> SlotFailoverState
         self._cooldown_task: Optional[asyncio.Task] = None
 
+        from usr.plugins.a0_lmm_router.helpers.smart_router.health import SlotHealthChecker
+        self._health_checker = SlotHealthChecker(
+            timeout=self.global_config.get('health_check_timeout', 2),
+        )
+
         # Cooldown probes are started lazily in start_all() to avoid
         # calling asyncio.create_task() during synchronous __init__.
         # During agent_init there may be no running event loop yet.
@@ -1233,37 +1238,24 @@ class BackendManager:
         return None
 
     def _get_slot_health(self, slot_id: str) -> str:
-        """Check health of a slot: 'healthy', 'unhealthy', 'stopped', 'unknown'."""
-        # First check cooldown tracker for ERROR slots
+        """Check health of a slot: 'healthy', 'unhealthy', or 'unknown'.
+
+        Cooldown check runs in-memory before any network call.
+        Network probe is delegated to self._health_checker so it can be
+        replaced without touching routing logic (e.g. for async probing
+        in Phase 3 or stub injection in tests).
+        """
         if slot_id in self._cooldown_tracker.get_error_slots():
             return 'unhealthy'
 
-        # Check via backend status
         if not self._backend:
             return 'unknown'
 
-        # Get current status from backend
-        # This is async, so we'll do a simple check based on last known state
         config = self._slot_configs.get(slot_id)
         if not config:
             return 'unknown'
 
-        port = config.get('port', 8080)
-        host = config.get('host', 'localhost')
-        url = f"http://{host}:{port}/health"
-
-        # Note: This is a synchronous health check for quick decisions
-        # For production, consider async health checks
-        try:
-            import urllib.request
-            with urllib.request.urlopen(url, timeout=2) as resp:
-                if resp.status == 200:
-                    data = json.loads(resp.read().decode())
-                    if data.get('status') == 'ok':
-                        return 'healthy'
-            return 'unhealthy'
-        except Exception:
-            return 'unhealthy'
+        return self._health_checker.check(config)
 
     def _get_slot_url(self, slot_id: str, config: Dict[str, Any]) -> str:
         """Get the full API URL for a slot."""
