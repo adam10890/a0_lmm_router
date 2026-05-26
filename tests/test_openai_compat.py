@@ -55,8 +55,13 @@ global:
 """
 
 
-def _make_client(tmp_path, yaml_content=_ROUTING_CONFIG, health_result="healthy"):
-    """Return a TestClient with stub health checker and /v1/* routes wired up."""
+def _make_client(tmp_path, yaml_content=_ROUTING_CONFIG, health_result="healthy", post_fn=None):
+    """Return a TestClient with stub health checker and /v1/* routes wired up.
+
+    post_fn: injectable async callable(url, payload, timeout) → (status, dict).
+    Default raises aiohttp.ClientError, simulating a refused connection so tests
+    never accidentally hit a real llama.cpp server.
+    """
     import json as _json
 
     from pydantic import ValidationError
@@ -90,7 +95,14 @@ def _make_client(tmp_path, yaml_content=_ROUTING_CONFIG, health_result="healthy"
     obs._make_manager = lambda: mgr
 
     intent_handler = RoutingIntentHandler(obs)
-    compat_handler = OpenAICompatHandler(obs, intent_handler)
+
+    # Default: simulate a connection-refused error so no real server is needed.
+    if post_fn is None:
+        import aiohttp as _aiohttp
+        async def post_fn(url, payload, timeout=120):  # noqa: E306
+            raise _aiohttp.ClientError(f"Connection refused (test stub): {url}")
+
+    compat_handler = OpenAICompatHandler(obs, intent_handler, _post_fn=post_fn)
 
     async def v1_models(request: Request) -> JSONResponse:
         return JSONResponse(compat_handler.get_models().model_dump())
@@ -176,10 +188,11 @@ class TestModelsEndpoint:
 # ---------------------------------------------------------------------------
 
 class TestChatCompletionsStatus:
-    def test_minimal_request_returns_501(self, tmp_path):
+    def test_healthy_slot_connection_error_returns_502(self, tmp_path):
+        # Default post_fn raises ClientError (no real server) → 502.
         client, _ = _make_client(tmp_path)
         resp = client.post("/v1/chat/completions", json={"model": "chat", "messages": []})
-        assert resp.status_code == 501
+        assert resp.status_code == 502
 
     def test_stream_true_returns_400(self, tmp_path):
         client, _ = _make_client(tmp_path)
@@ -204,10 +217,10 @@ class TestChatCompletionsStatus:
         )
         assert resp.status_code == 400
 
-    def test_501_error_code_is_forwarding_not_implemented(self, tmp_path):
+    def test_connection_error_code_is_upstream_connection_error(self, tmp_path):
         client, _ = _make_client(tmp_path)
         body = client.post("/v1/chat/completions", json={"model": "chat", "messages": []}).json()
-        assert body["error"]["code"] == "forwarding_not_implemented"
+        assert body["error"]["code"] == "upstream_connection_error"
 
 
 # ---------------------------------------------------------------------------
@@ -242,11 +255,12 @@ class TestNoFakeInference:
         assert "routing_decision" in body
         assert body["routing_decision"]["dry_run"] is True
 
-    def test_provider_shell_phase_is_6(self, tmp_path):
+    def test_provider_shell_in_502_error(self, tmp_path):
+        # On connection error, the 502 body includes provider_shell metadata.
         client, _ = _make_client(tmp_path)
         body = client.post("/v1/chat/completions", json={"model": "chat", "messages": []}).json()
-        assert body["provider_shell"]["phase"] == 6
-        assert body["provider_shell"]["forwarding"] is False
+        assert body["provider_shell"]["phase"] == 7
+        assert body["provider_shell"]["streaming"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +302,8 @@ class TestChatCompletionsRouting:
         assert body["routing_decision"]["no_slot_available"] is True
 
     def test_extra_openai_fields_accepted(self, tmp_path):
+        # Unknown/extra fields must not cause a 422 — they are silently accepted.
+        # Default stub has no real server → 502, but NOT 400/422.
         client, _ = _make_client(tmp_path)
         resp = client.post("/v1/chat/completions", json={
             "model": "chat",
@@ -298,7 +314,7 @@ class TestChatCompletionsRouting:
             "frequency_penalty": 0.1,
             "presence_penalty": 0.0,
         })
-        assert resp.status_code == 501
+        assert resp.status_code not in (400, 422)
 
 
 # ---------------------------------------------------------------------------
@@ -385,3 +401,181 @@ class TestTranslation:
         req = OpenAIChatRequest.model_validate({"model": "default", "messages": []})
         _, warnings = chat_request_to_routing_intent(req, [])
         assert not any("unknown_model" in w for w in warnings)
+
+
+# ---------------------------------------------------------------------------
+# Forwarding tests (Phase 7a) — inject stub post_fn to avoid real network
+# ---------------------------------------------------------------------------
+
+def _success_post(response_body=None):
+    """Return a post_fn stub that simulates a successful upstream response."""
+    if response_body is None:
+        response_body = {
+            "id": "chatcmpl-test",
+            "object": "chat.completion",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "Hello!"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+        }
+
+    async def _post(url, payload, timeout=120):
+        return 200, response_body
+
+    return _post
+
+
+class TestForwarding:
+    def test_successful_response_passed_through(self, tmp_path):
+        client, _ = _make_client(tmp_path, post_fn=_success_post())
+        resp = client.post("/v1/chat/completions", json={
+            "model": "chat",
+            "messages": [{"role": "user", "content": "hi"}],
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["object"] == "chat.completion"
+        assert "choices" in body
+
+    def test_no_slot_returns_503(self, tmp_path):
+        client, _ = _make_client(tmp_path, health_result="unhealthy",
+                                  post_fn=_success_post())
+        resp = client.post("/v1/chat/completions", json={"model": "chat", "messages": []})
+        assert resp.status_code == 503
+        assert resp.json()["error"]["code"] == "no_slot_available"
+
+    def test_connection_error_returns_502(self, tmp_path):
+        # Default _make_client uses connection-error stub.
+        client, _ = _make_client(tmp_path)
+        resp = client.post("/v1/chat/completions", json={"model": "chat", "messages": []})
+        assert resp.status_code == 502
+        assert resp.json()["error"]["code"] == "upstream_connection_error"
+
+    def test_upstream_error_passed_through(self, tmp_path):
+        async def error_post(url, payload, timeout=120):
+            return 500, {"error": {"message": "Internal error", "code": "internal_error"}}
+
+        client, _ = _make_client(tmp_path, post_fn=error_post)
+        resp = client.post("/v1/chat/completions", json={"model": "chat", "messages": []})
+        assert resp.status_code == 500
+
+    def test_stream_still_rejected_before_forwarding(self, tmp_path):
+        forwarding_calls = []
+
+        async def tracking_post(url, payload, timeout=120):
+            forwarding_calls.append(url)
+            return 200, {}
+
+        client, _ = _make_client(tmp_path, post_fn=tracking_post)
+        resp = client.post("/v1/chat/completions", json={
+            "model": "chat", "messages": [], "stream": True,
+        })
+        assert resp.status_code == 400
+        assert forwarding_calls == []   # never called
+
+    def test_forwarded_payload_includes_messages(self, tmp_path):
+        received: dict = {}
+
+        async def capturing_post(url, payload, timeout=120):
+            received.update(payload)
+            return 200, {"object": "chat.completion", "choices": []}
+
+        client, _ = _make_client(tmp_path, post_fn=capturing_post)
+        client.post("/v1/chat/completions", json={
+            "model": "chat",
+            "messages": [{"role": "user", "content": "hello"}],
+        })
+        assert "messages" in received
+        assert received["messages"][0]["content"] == "hello"
+
+    def test_forwarded_payload_excludes_metadata(self, tmp_path):
+        received: dict = {}
+
+        async def capturing_post(url, payload, timeout=120):
+            received.update(payload)
+            return 200, {"object": "chat.completion", "choices": []}
+
+        client, _ = _make_client(tmp_path, post_fn=capturing_post)
+        client.post("/v1/chat/completions", json={
+            "model": "chat",
+            "messages": [],
+            "metadata": {"privacy_mode": "local_only", "agent_id": "hermes"},
+        })
+        assert "metadata" not in received
+        assert "privacy_mode" not in received
+        assert "agent_id" not in received
+
+    def test_forwarded_payload_excludes_tools(self, tmp_path):
+        received: dict = {}
+
+        async def capturing_post(url, payload, timeout=120):
+            received.update(payload)
+            return 200, {"object": "chat.completion", "choices": []}
+
+        client, _ = _make_client(tmp_path, post_fn=capturing_post)
+        client.post("/v1/chat/completions", json={
+            "model": "chat",
+            "messages": [],
+            "tools": [{"type": "function", "function": {"name": "search"}}],
+        })
+        assert "tools" not in received
+        assert "tool_choice" not in received
+
+    def test_stream_forced_false_in_forwarded_payload(self, tmp_path):
+        received: dict = {}
+
+        async def capturing_post(url, payload, timeout=120):
+            received.update(payload)
+            return 200, {"object": "chat.completion", "choices": []}
+
+        client, _ = _make_client(tmp_path, post_fn=capturing_post)
+        client.post("/v1/chat/completions", json={"model": "chat", "messages": []})
+        assert received.get("stream") is False
+
+    def test_temperature_and_max_tokens_forwarded(self, tmp_path):
+        received: dict = {}
+
+        async def capturing_post(url, payload, timeout=120):
+            received.update(payload)
+            return 200, {"object": "chat.completion", "choices": []}
+
+        client, _ = _make_client(tmp_path, post_fn=capturing_post)
+        client.post("/v1/chat/completions", json={
+            "model": "chat",
+            "messages": [],
+            "temperature": 0.7,
+            "max_tokens": 256,
+        })
+        assert received.get("temperature") == 0.7
+        assert received.get("max_tokens") == 256
+
+    def test_forwarding_url_has_no_double_v1(self, tmp_path):
+        captured: dict = {}
+
+        async def url_capturing_post(url, payload, timeout=120):
+            captured["url"] = url
+            return 200, {"object": "chat.completion", "choices": []}
+
+        client, _ = _make_client(tmp_path, post_fn=url_capturing_post)
+        client.post("/v1/chat/completions", json={"model": "chat", "messages": []})
+        url = captured.get("url", "")
+        assert url.endswith("/v1/chat/completions")
+        assert "/v1/v1/" not in url
+
+    def test_routing_performed_before_forwarding(self, tmp_path):
+        captured: dict = {}
+
+        async def tracking_post(url, payload, timeout=120):
+            captured["url"] = url
+            return 200, {"object": "chat.completion", "choices": []}
+
+        client, _ = _make_client(tmp_path, post_fn=tracking_post)
+        client.post("/v1/chat/completions", json={
+            "model": "utility",   # should select utility slot (port 8088)
+            "messages": [],
+        })
+        assert "8088" in captured.get("url", "")

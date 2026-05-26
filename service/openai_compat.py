@@ -1,20 +1,22 @@
 """
-OpenAI-compatible provider contract shell (Phase 6).
+OpenAI-compatible provider (Phase 7a: non-streaming forwarding).
 
 GET  /v1/models            — list available slots as OpenAI model objects
-POST /v1/chat/completions  — accept OpenAI-style request; resolve routing
-                             decision; return 501 (no inference forwarding yet)
+POST /v1/chat/completions  — accept OpenAI request; resolve routing; forward
+                             non-streaming request to selected llama.cpp slot
 
-Invariants:
-  - No prompts are forwarded to any model.
-  - No fake completions are returned.
-  - No streaming is implemented.
+Forwarding invariants:
+  - Only whitelisted OpenAI inference fields are forwarded.
+  - metadata / privacy flags / routing hints are stripped before forwarding.
+  - stream=true is rejected (400); streaming is not implemented.
   - No state is mutated.
-  - All routing decisions flow through RoutingIntentHandler.
+  - All routing flows through RoutingIntentHandler.
+  - Successful upstream responses are passed through without modification.
+  - Errors include routing_decision for diagnostics.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -25,6 +27,17 @@ from .routing_intent import (
 )
 
 # ---------------------------------------------------------------------------
+# Fields forwarded to llama.cpp — explicit whitelist.
+# Nothing outside this set reaches the model.
+# ---------------------------------------------------------------------------
+
+_FORWARDED_SCALAR_FIELDS = frozenset({
+    "model", "temperature", "max_tokens", "top_p",
+    "stop", "presence_penalty", "frequency_penalty", "seed",
+})
+
+
+# ---------------------------------------------------------------------------
 # OpenAI request schema — minimum viable subset
 # ---------------------------------------------------------------------------
 
@@ -32,11 +45,11 @@ class ChatMessage(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     role: str
-    content: Optional[Any] = None      # str or list (multimodal); stored but not forwarded
+    content: Optional[Any] = None   # str or list (multimodal)
 
 
 class OpenAIChatRequest(BaseModel):
-    model_config = ConfigDict(extra="allow")  # unknown fields accepted silently
+    model_config = ConfigDict(extra="allow")  # unknown fields silently accepted
 
     model: str = "default"
     messages: List[ChatMessage] = Field(default_factory=list)
@@ -66,6 +79,66 @@ class ModelList(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# HTTP post — injectable for testing
+# ---------------------------------------------------------------------------
+
+async def _aiohttp_post(
+    url: str,
+    payload: Dict[str, Any],
+    timeout: int = 120,
+) -> Tuple[int, Dict[str, Any]]:
+    """POST JSON payload to url; return (status_code, response_dict)."""
+    import aiohttp  # noqa: PLC0415 — lazy import keeps module importable without aiohttp
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=aiohttp.ClientTimeout(total=timeout),
+        ) as resp:
+            try:
+                body = await resp.json(content_type=None)
+            except Exception:
+                body = {
+                    "error": {
+                        "message": "Upstream returned a non-JSON response.",
+                        "code": "invalid_upstream_response",
+                    }
+                }
+            return resp.status, body
+
+
+# ---------------------------------------------------------------------------
+# Forward payload construction
+# ---------------------------------------------------------------------------
+
+def _build_forward_payload(req: OpenAIChatRequest) -> Dict[str, Any]:
+    """
+    Build the payload to send to llama.cpp.
+
+    Only whitelisted inference fields are included.
+    metadata, tools, tool_choice, routing hints, and unknown extra fields
+    are deliberately excluded.
+    """
+    payload: Dict[str, Any] = {}
+
+    for field in _FORWARDED_SCALAR_FIELDS:
+        value = getattr(req, field, None)
+        if value is not None:
+            payload[field] = value
+
+    # messages are serialised from pydantic objects; extra per-message
+    # fields are included (some clients attach per-message metadata).
+    payload["messages"] = [m.model_dump(exclude_none=True) for m in req.messages]
+
+    # Phase 7a: always force non-streaming to the upstream.
+    payload["stream"] = False
+
+    return payload
+
+
+# ---------------------------------------------------------------------------
 # Translation: OpenAI request → RoutingIntentRequest
 # ---------------------------------------------------------------------------
 
@@ -85,7 +158,7 @@ def _resolve_preferred_slot(
     """
     Map an OpenAI model name to a slot id.
 
-    Priority: exact slot-id match → then model_id field match → None.
+    Priority: exact slot-id match → model_id field match → None.
     """
     if not model or model == "default":
         return None
@@ -106,13 +179,12 @@ def chat_request_to_routing_intent(
     Translate an OpenAI-style chat request into a RoutingIntentRequest.
 
     Returns (routing_intent, translation_warnings).
-    Fields unknown to RoutingIntentRequest are stashed in intent.metadata
-    so they survive the pipeline without loss.
+    Forwarding-only fields (temperature, max_tokens, …) are stashed in
+    intent.metadata for reference but are never used for routing decisions.
     """
     translation_warnings: List[str] = []
     meta = req.metadata
 
-    # ── model → preferred_slot ────────────────────────────────────────────
     preferred_slot = _resolve_preferred_slot(req.model, observer_slots)
     if req.model not in ("default", "", None) and preferred_slot is None:
         translation_warnings.append(
@@ -120,19 +192,15 @@ def chat_request_to_routing_intent(
             "slot id or model_id; routing to default chain"
         )
 
-    # ── pull routing hints from metadata ─────────────────────────────────
-    privacy_mode    = str(meta.get("privacy_mode", "unknown"))
-    local_only      = bool(meta.get("local_only", False))
-    cloud_allowed   = bool(meta.get("cloud_allowed", True))
-    agent_id        = str(meta.get("agent_id", "unknown"))
-    agent_type      = str(meta.get("agent_type", "unknown"))
-    task_type       = str(meta.get("task_type", "chat"))
-    role            = meta.get("role") or None   # explicit role override
+    privacy_mode  = str(meta.get("privacy_mode", "unknown"))
+    local_only    = bool(meta.get("local_only", False))
+    cloud_allowed = bool(meta.get("cloud_allowed", True))
+    agent_id      = str(meta.get("agent_id", "unknown"))
+    agent_type    = str(meta.get("agent_type", "unknown"))
+    task_type     = str(meta.get("task_type", "chat"))
+    role          = meta.get("role") or None
 
-    # ── capability flags ──────────────────────────────────────────────────
     requires_tools = bool(req.tools)
-
-    # ── token estimate ───────────────────────────────────────────────────
     estimated_tokens = _estimate_tokens(req.messages) if req.messages else None
 
     intent = RoutingIntentRequest(
@@ -146,15 +214,14 @@ def chat_request_to_routing_intent(
         requires_tools=requires_tools,
         estimated_tokens=estimated_tokens,
         preferred_slot=preferred_slot,
-        # Stash forwarding-only fields for downstream reference.
         metadata={
-            "openai_model": req.model,
-            "message_count": len(req.messages),
-            "max_tokens": req.max_tokens,
-            "temperature": req.temperature,
+            "openai_model":    req.model,
+            "message_count":   len(req.messages),
+            "max_tokens":      req.max_tokens,
+            "temperature":     req.temperature,
             "stream_requested": req.stream,
-            "tools_present": bool(req.tools),
-            "tool_choice": req.tool_choice,
+            "tools_present":   bool(req.tools),
+            "tool_choice":     req.tool_choice,
         },
     )
     return intent, translation_warnings
@@ -164,17 +231,33 @@ def chat_request_to_routing_intent(
 # Handler
 # ---------------------------------------------------------------------------
 
+# Type alias for the injectable HTTP post function.
+_PostFn = Callable[
+    [str, Dict[str, Any], int],
+    Coroutine[Any, Any, Tuple[int, Dict[str, Any]]],
+]
+
+
 class OpenAICompatHandler:
     """
     Implements GET /v1/models and POST /v1/chat/completions.
 
     Collaborates with ObserverBackend (slot list) and RoutingIntentHandler
-    (routing decisions).  Never touches BackendManager start/stop paths.
+    (routing decisions).
+
+    _post_fn is injectable for testing: tests pass a stub coroutine that
+    avoids real network calls.  Production uses _aiohttp_post.
     """
 
-    def __init__(self, observer: Any, intent_handler: RoutingIntentHandler) -> None:
+    def __init__(
+        self,
+        observer: Any,
+        intent_handler: RoutingIntentHandler,
+        _post_fn: Optional[_PostFn] = None,
+    ) -> None:
         self._observer = observer
         self._intent_handler = intent_handler
+        self._post_fn: _PostFn = _post_fn or _aiohttp_post
 
     # ------------------------------------------------------------------
     # GET /v1/models
@@ -212,48 +295,76 @@ class OpenAICompatHandler:
 
         Returns (http_status_code, response_body).
 
-        Contract:
-          - stream=True  → 400  streaming_not_implemented
-          - otherwise    → 501  forwarding_not_implemented + routing_decision
-          - Never returns fake inference output.
-          - Never forwards the prompt to any model.
+        Flow:
+          stream=True             → 400 streaming_not_implemented
+          no healthy slot         → 503 no_slot_available
+          connection error        → 502 upstream_connection_error
+          upstream non-2xx        → upstream status + body (pass-through)
+          upstream 200            → 200 + body (pass-through, no wrapper)
         """
+        # ── 1. Reject streaming ───────────────────────────────────────────
         if req.stream:
             return 400, {
                 "object": "error",
                 "error": {
                     "message": (
-                        "Streaming is not implemented in the Phase 6 provider shell. "
-                        "Set stream=false."
+                        "Streaming is not implemented. Set stream=false."
                     ),
                     "type": "not_implemented",
                     "code": "streaming_not_implemented",
                 },
             }
 
+        # ── 2. Resolve routing decision ───────────────────────────────────
         slots = self._observer.get_slots()
         intent, translation_warnings = chat_request_to_routing_intent(req, slots)
         decision: RoutingDecisionResponse = await self._intent_handler.handle(intent)
 
-        return 501, {
-            "object": "error",
-            "error": {
-                "message": (
-                    "Inference forwarding is not implemented in the Phase 6 provider shell. "
-                    "Inspect routing_decision to see which slot would serve this request."
-                ),
-                "type": "not_implemented",
-                "code": "forwarding_not_implemented",
-            },
-            "routing_decision": decision.model_dump(),
-            "translation_warnings": translation_warnings,
-            "provider_shell": {
-                "phase": 6,
-                "forwarding": False,
-                "streaming": False,
-                "note": (
-                    "This endpoint resolves routing decisions for OpenAI-compatible "
-                    "requests but does not forward prompts to any model."
-                ),
-            },
-        }
+        # ── 3. No slot available ──────────────────────────────────────────
+        if decision.no_slot_available:
+            return 503, {
+                "object": "error",
+                "error": {
+                    "message": "No healthy local slot is available for this request.",
+                    "type": "service_unavailable",
+                    "code": "no_slot_available",
+                },
+                "routing_decision": decision.model_dump(),
+                "translation_warnings": translation_warnings,
+            }
+
+        # ── 4. Build forwarding payload (whitelist only) ──────────────────
+        payload = _build_forward_payload(req)
+        # selected_url is already http://host:port/v1 — append endpoint only.
+        target_url = f"{decision.selected_url}/chat/completions"
+
+        # ── 5. Forward to slot ────────────────────────────────────────────
+        try:
+            upstream_status, upstream_body = await self._post_fn(target_url, payload)
+        except Exception as exc:
+            # Connection-level failure (refused, timeout, DNS, …).
+            # Do not leak the full exception; include safe error category only.
+            err_type = type(exc).__name__
+            return 502, {
+                "object": "error",
+                "error": {
+                    "message": "Connection to the selected slot failed.",
+                    "type": "bad_gateway",
+                    "code": "upstream_connection_error",
+                    "slot_id": decision.selected_slot_id,
+                    "error_type": err_type,
+                },
+                "routing_decision": decision.model_dump(),
+                "translation_warnings": translation_warnings,
+                "provider_shell": {
+                    "phase": 7,
+                    "forwarding": True,
+                    "streaming": False,
+                    "note": "Forwarding was attempted but the upstream connection failed.",
+                },
+            }
+
+        # ── 6. Pass upstream response through ─────────────────────────────
+        # For successful responses: return body as-is (OpenAI-compatible shape).
+        # For upstream errors: return their status and body without modification.
+        return upstream_status, upstream_body
