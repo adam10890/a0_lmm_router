@@ -1,22 +1,20 @@
 """
 Slot health probing, isolated from BackendManager routing logic.
 
-SlotHealthChecker accepts an injectable probe_fn so callers (tests, future
-async adapters) can replace the network layer without touching routing logic.
+SlotHealthChecker accepts injectable probe_fn / async_probe_fn so callers
+(tests, future adapters) can replace the network layer without touching
+routing logic.
 
-Default probe: synchronous urllib GET against /health (same as the original
-inline implementation in BackendManager._get_slot_health).
+Sync default:  _urllib_probe   (stdlib only, used by _get_slot_health)
+Async default: _aiohttp_probe  (aiohttp, used by _get_slot_health_async)
 
-Future async path:
-    checker = SlotHealthChecker()
-    # Phase 3: add check_async(slot_config) that awaits an aiohttp probe_fn
-    # without changing select_slot_with_failover or the routing chain logic.
+Both return {"ok": bool, ...} and are safe to swap independently.
 """
 from __future__ import annotations
 
 import json
 import logging
-from typing import Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger("lmm_router.health")
 
@@ -42,25 +40,46 @@ def _urllib_probe(url: str, timeout: int) -> Dict:
         return {"ok": False, "error": str(exc)}
 
 
+async def _aiohttp_probe(url: str, timeout: int) -> Dict:
+    """Default async probe: GET /health via aiohttp, return {"ok": bool}."""
+    import aiohttp  # noqa: PLC0415
+
+    try:
+        client_timeout = aiohttp.ClientTimeout(total=timeout)
+        async with aiohttp.ClientSession(timeout=client_timeout) as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json(content_type=None)
+                    return {"ok": data.get("status") == "ok", "http_status": resp.status}
+                return {"ok": False, "http_status": resp.status}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 class SlotHealthChecker:
     """Probe a single slot's /health endpoint and return a health string.
 
     Parameters
     ----------
     timeout:
-        Seconds to wait for a probe response.
+        Seconds to wait for a probe response (applied to both sync and async paths).
     probe_fn:
-        Callable(url: str, timeout: int) -> {"ok": bool, ...}.
+        Sync callable(url: str, timeout: int) -> {"ok": bool, ...}.
         Defaults to the stdlib urllib probe.  Inject a stub in tests.
+    async_probe_fn:
+        Async callable(url: str, timeout: int) -> {"ok": bool, ...}.
+        Defaults to the aiohttp probe.  Inject an async stub in tests.
     """
 
     def __init__(
         self,
         timeout: int = 2,
         probe_fn: Optional[Callable[[str, int], Dict]] = None,
+        async_probe_fn: Optional[Any] = None,
     ) -> None:
         self.timeout = timeout
         self._probe = probe_fn or _urllib_probe
+        self._async_probe = async_probe_fn  # None → resolved at call time
 
     def check(self, slot_config: Dict) -> str:
         """Return HEALTHY, UNHEALTHY, or UNKNOWN for the given slot config.
@@ -79,4 +98,24 @@ class SlotHealthChecker:
             return HEALTHY if result.get("ok") else UNHEALTHY
         except Exception:
             logger.debug("Health probe raised unexpectedly for %s:%s", host, port)
+            return UNHEALTHY
+
+    async def check_async(self, slot_config: Dict) -> str:
+        """Async version of check(). Does not block the event loop.
+
+        Uses _aiohttp_probe by default; override with async_probe_fn for tests.
+        Return values are identical to check(): HEALTHY, UNHEALTHY, or UNKNOWN.
+        """
+        host = slot_config.get("host", "localhost")
+        port = slot_config.get("port")
+        if not port:
+            return UNKNOWN
+
+        url = f"http://{host}:{port}/health"
+        probe = self._async_probe or _aiohttp_probe
+        try:
+            result = await probe(url, self.timeout)
+            return HEALTHY if result.get("ok") else UNHEALTHY
+        except Exception:
+            logger.debug("Async health probe raised unexpectedly for %s:%s", host, port)
             return UNHEALTHY
