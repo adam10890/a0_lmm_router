@@ -1205,6 +1205,19 @@ The plugin now includes analysis of `tiny_router` (see `_SYSTEM_MAP.html` Append
 
 ## Troubleshooting
 
+### `exceed_context_size_error` / request exceeds available context size (65536)
+
+Agent Zero compresses **history only** against `ctx_length × ctx_history` *before* the system prompt is built. With `lmm_router`, llama.cpp enforces a **hard** `n_ctx` on the full request (system + history + extras + completion).
+
+**Fix (v1.3+):** extension `message_loop_prompts_after/_20_router_context_guard.py`:
+
+1. Reads live `n_ctx` from router `GET /v1/models` (fallback: `ROUTER_CTX_SIZE`, slot config, preset `ctx_length`).
+2. After the system prompt is assembled, computes a history budget:  
+   `n_ctx × 0.9 − system_tokens − extras_estimate − 8192` (completion reserve).
+3. Temporarily overrides `History._get_ctx_size_for_history()` to that budget and runs A0’s built-in `history.compress()` until the prompt fits.
+
+You should see **“LMM Router context guard”** in the agent log when compression runs. If history still exceeds the budget after compression, start a new chat or reduce memories / system prompt size.
+
 ### Plugin does not appear in the Settings sidebar
 
 - Ensure `.toggle-1` exists in the plugin directory
