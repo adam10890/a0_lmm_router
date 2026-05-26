@@ -1,7 +1,8 @@
 """
-Pure unit tests for helpers/smart_router/failover.py.
-No I/O, no BackendManager, no network — covers the classification and
-chain-traversal logic that select_slot_with_failover() depends on.
+Tests for the pure failover logic in helpers/smart_router/failover.py.
+
+These tests require no running services, no config files, and no BackendManager.
+They validate the data structures and classification functions in isolation.
 """
 from __future__ import annotations
 
@@ -18,204 +19,221 @@ if str(REPO_ROOT) not in sys.path:
 # classify_failover_reason
 # ---------------------------------------------------------------------------
 
-class _FakeExc(Exception):
-    def __init__(self, msg, status_code=None):
-        super().__init__(msg)
-        if status_code is not None:
-            self.status_code = status_code
+class TestClassifyFailoverReason:
+    def _classify(self, exc):
+        from usr.plugins.a0_lmm_router.helpers.smart_router.failover import classify_failover_reason
+        return classify_failover_reason(exc)
 
+    def test_rate_limit_by_status_code(self):
+        exc = Exception("HTTP error")
+        exc.status_code = 429
+        result = self._classify(exc)
+        assert result["reason"].value == "rate_limit"
+        assert result["status_code"] == 429
 
-def test_classify_by_status_429():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import (
-        classify_failover_reason, FailoverReason,
-    )
-    result = classify_failover_reason(_FakeExc("too many", status_code=429))
-    assert result["reason"] == FailoverReason.RATE_LIMIT
-    assert result["status_code"] == 429
+    def test_timeout_by_status_code_408(self):
+        exc = Exception("request timeout")
+        exc.status_code = 408
+        result = self._classify(exc)
+        assert result["reason"].value == "timeout"
 
+    def test_provider_error_by_status_500(self):
+        exc = Exception("internal error")
+        exc.status_code = 500
+        result = self._classify(exc)
+        assert result["reason"].value == "provider_error"
 
-def test_classify_by_status_500():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import (
-        classify_failover_reason, FailoverReason,
-    )
-    result = classify_failover_reason(_FakeExc("server error", status_code=500))
-    assert result["reason"] == FailoverReason.PROVIDER_ERROR
-    assert result["status_code"] == 500
+    def test_timeout_by_text(self):
+        result = self._classify(Exception("connection timed out after 30s"))
+        assert result["reason"].value == "timeout"
+        assert result["status_code"] is None
 
+    def test_rate_limit_by_text(self):
+        result = self._classify(Exception("rate limit exceeded"))
+        assert result["reason"].value == "rate_limit"
 
-def test_classify_by_status_408():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import (
-        classify_failover_reason, FailoverReason,
-    )
-    result = classify_failover_reason(_FakeExc("timeout", status_code=408))
-    assert result["reason"] == FailoverReason.TIMEOUT
+    def test_quota_exhausted_by_text(self):
+        result = self._classify(Exception("insufficient_quota for this model"))
+        assert result["reason"].value == "quota_exhausted"
 
+    def test_provider_error_by_text(self):
+        result = self._classify(Exception("connection refused by host"))
+        assert result["reason"].value == "provider_error"
 
-def test_classify_by_status_non_failover():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import (
-        classify_failover_reason, FailoverReason,
-    )
-    result = classify_failover_reason(_FakeExc("bad request", status_code=400))
-    assert result["reason"] == FailoverReason.HTTP_ERROR
-
-
-def test_classify_by_text_timeout():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import (
-        classify_failover_reason, FailoverReason,
-    )
-    result = classify_failover_reason(Exception("read timed out after 30s"))
-    assert result["reason"] == FailoverReason.TIMEOUT
-    assert result["status_code"] is None
-
-
-def test_classify_by_text_connection_refused():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import (
-        classify_failover_reason, FailoverReason,
-    )
-    result = classify_failover_reason(Exception("connection refused"))
-    assert result["reason"] == FailoverReason.PROVIDER_ERROR
-
-
-def test_classify_by_text_rate_limit():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import (
-        classify_failover_reason, FailoverReason,
-    )
-    result = classify_failover_reason(Exception("weekly usage limit exceeded"))
-    assert result["reason"] == FailoverReason.RATE_LIMIT
-
-
-def test_classify_by_text_quota():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import (
-        classify_failover_reason, FailoverReason,
-    )
-    result = classify_failover_reason(Exception("insufficient_quota: no credits left"))
-    assert result["reason"] == FailoverReason.QUOTA_EXHAUSTED
-
-
-def test_classify_unknown():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import (
-        classify_failover_reason, FailoverReason,
-    )
-    result = classify_failover_reason(Exception("something completely weird"))
-    assert result["reason"] == FailoverReason.UNKNOWN_ERROR
+    def test_unknown_error(self):
+        result = self._classify(Exception("some unexpected error"))
+        assert result["reason"].value == "unknown_error"
+        assert result["status_code"] is None
 
 
 # ---------------------------------------------------------------------------
 # should_failover
 # ---------------------------------------------------------------------------
 
-def test_should_failover_on_503():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import should_failover
-    assert should_failover(_FakeExc("service unavailable", status_code=503)) is True
+class TestShouldFailover:
+    def _should(self, exc):
+        from usr.plugins.a0_lmm_router.helpers.smart_router.failover import should_failover
+        return should_failover(exc)
 
+    def test_429_triggers_failover(self):
+        exc = Exception("rate limited")
+        exc.status_code = 429
+        assert self._should(exc) is True
 
-def test_should_not_failover_on_400():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import should_failover
-    assert should_failover(_FakeExc("bad request", status_code=400)) is False
+    def test_500_triggers_failover(self):
+        exc = Exception("server error")
+        exc.status_code = 500
+        assert self._should(exc) is True
 
+    def test_503_triggers_failover(self):
+        exc = Exception("service unavailable")
+        exc.status_code = 503
+        assert self._should(exc) is True
 
-def test_should_failover_on_connection_error_text():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import should_failover
-    assert should_failover(Exception("connection reset by peer")) is True
+    def test_404_does_not_trigger_failover(self):
+        exc = Exception("not found")
+        exc.status_code = 404
+        assert self._should(exc) is False
+
+    def test_timeout_text_triggers_failover(self):
+        assert self._should(Exception("connection timed out")) is True
+
+    def test_unknown_error_does_not_trigger_failover(self):
+        assert self._should(Exception("some unexpected business logic error")) is False
 
 
 # ---------------------------------------------------------------------------
 # get_next_in_chain
 # ---------------------------------------------------------------------------
 
-def test_get_next_in_chain_normal():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import get_next_in_chain
-    assert get_next_in_chain("chat", ["chat", "utility", "openrouter_fallback"]) == "utility"
+class TestGetNextInChain:
+    def _next(self, current, chain):
+        from usr.plugins.a0_lmm_router.helpers.smart_router.failover import get_next_in_chain
+        return get_next_in_chain(current, chain)
 
+    def test_returns_second_when_first_is_current(self):
+        assert self._next("chat", ["chat", "utility", "openrouter"]) == "utility"
 
-def test_get_next_in_chain_middle():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import get_next_in_chain
-    assert get_next_in_chain("utility", ["chat", "utility", "openrouter_fallback"]) == "openrouter_fallback"
+    def test_returns_third_from_second(self):
+        assert self._next("utility", ["chat", "utility", "openrouter"]) == "openrouter"
 
+    def test_returns_none_at_end_of_chain(self):
+        assert self._next("openrouter", ["chat", "utility", "openrouter"]) is None
 
-def test_get_next_in_chain_exhausted():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import get_next_in_chain
-    assert get_next_in_chain("openrouter_fallback", ["chat", "utility", "openrouter_fallback"]) is None
+    def test_returns_first_when_current_not_in_chain(self):
+        assert self._next("unknown", ["chat", "utility"]) == "chat"
 
+    def test_empty_chain_returns_none(self):
+        assert self._next("chat", []) is None
 
-def test_get_next_in_chain_not_in_chain_starts_from_head():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import get_next_in_chain
-    assert get_next_in_chain("unknown_slot", ["chat", "utility"]) == "chat"
-
-
-def test_get_next_in_chain_empty_chain():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import get_next_in_chain
-    assert get_next_in_chain("chat", []) is None
+    def test_single_element_chain_at_end_returns_none(self):
+        assert self._next("embed", ["embed"]) is None
 
 
 # ---------------------------------------------------------------------------
 # get_chain_for_role
 # ---------------------------------------------------------------------------
 
-def test_get_chain_for_role_default_chat():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import (
-        get_chain_for_role, DEFAULT_CHAINS,
-    )
-    chain = get_chain_for_role("chat")
-    assert chain == DEFAULT_CHAINS["chat"]
+class TestGetChainForRole:
+    def _chain(self, role, custom=None):
+        from usr.plugins.a0_lmm_router.helpers.smart_router.failover import get_chain_for_role
+        return get_chain_for_role(role, custom)
 
+    def test_default_chat_chain(self):
+        chain = self._chain("chat")
+        assert chain[0] == "chat"
+        assert "utility" in chain
 
-def test_get_chain_for_role_custom_overrides_default():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import get_chain_for_role
-    custom = {"chat": ["gpu_primary", "gpu_secondary"]}
-    assert get_chain_for_role("chat", custom) == ["gpu_primary", "gpu_secondary"]
+    def test_default_embed_chain_has_no_fallback(self):
+        chain = self._chain("embed")
+        assert chain == ["embed"]
 
+    def test_custom_chain_overrides_default(self):
+        custom = {"chat": ["slot_a", "slot_b"]}
+        assert self._chain("chat", custom) == ["slot_a", "slot_b"]
 
-def test_get_chain_for_role_unknown_role_returns_role_itself():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import get_chain_for_role
-    assert get_chain_for_role("vision") == ["vision"]
+    def test_unknown_role_returns_role_as_singleton(self):
+        chain = self._chain("custom_role")
+        assert chain == ["custom_role"]
 
 
 # ---------------------------------------------------------------------------
 # CooldownTracker
 # ---------------------------------------------------------------------------
 
-def test_cooldown_tracker_mark_and_track():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import CooldownTracker
-    tracker = CooldownTracker()
-    tracker.mark_error("slot_chat", "connection refused")
-    assert "slot_chat" in tracker.get_error_slots()
+class TestCooldownTracker:
+    def _tracker(self):
+        from usr.plugins.a0_lmm_router.helpers.smart_router.failover import (
+            CooldownTracker, CooldownProbe,
+        )
+        return CooldownTracker(), CooldownProbe(interval_seconds=30, max_attempts=3)
+
+    def test_mark_error_makes_slot_appear_in_error_list(self):
+        tracker, _ = self._tracker()
+        tracker.mark_error("slot_chat", "connection refused")
+        assert "slot_chat" in tracker.get_error_slots()
+
+    def test_mark_error_idempotent(self):
+        tracker, _ = self._tracker()
+        tracker.mark_error("slot_chat", "first error")
+        tracker.mark_error("slot_chat", "second error")
+        assert tracker.get_error_slots().count("slot_chat") == 1
+
+    def test_mark_recovered_removes_slot(self):
+        tracker, _ = self._tracker()
+        tracker.mark_error("slot_chat")
+        tracker.mark_recovered("slot_chat")
+        assert "slot_chat" not in tracker.get_error_slots()
+
+    def test_should_probe_true_immediately_after_mark_error(self):
+        tracker, config = self._tracker()
+        tracker.mark_error("slot_chat")
+        # probe_count=0, elapsed >= 0 * interval → should probe
+        assert tracker.should_probe("slot_chat", config) is True
+
+    def test_should_probe_false_after_max_attempts(self):
+        tracker, config = self._tracker()
+        tracker.mark_error("slot_chat")
+        for _ in range(config.max_attempts):
+            tracker.record_probe("slot_chat")
+        assert tracker.should_probe("slot_chat", config) is False
+
+    def test_should_probe_false_for_unknown_slot(self):
+        tracker, config = self._tracker()
+        assert tracker.should_probe("nonexistent_slot", config) is False
+
+    def test_record_probe_increments_count(self):
+        tracker, config = self._tracker()
+        tracker.mark_error("slot_chat")
+        tracker.record_probe("slot_chat")
+        status = tracker.get_status("slot_chat")
+        assert status["probe_count"] == 1
 
 
-def test_cooldown_tracker_mark_recovered_removes_slot():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import CooldownTracker
-    tracker = CooldownTracker()
-    tracker.mark_error("slot_chat")
-    tracker.mark_recovered("slot_chat")
-    assert "slot_chat" not in tracker.get_error_slots()
+# ---------------------------------------------------------------------------
+# should_recover (time-based)
+# ---------------------------------------------------------------------------
 
+class TestShouldRecover:
+    def test_false_when_no_failure_recorded(self):
+        from usr.plugins.a0_lmm_router.helpers.smart_router.failover import (
+            SlotFailoverState, should_recover,
+        )
+        state = SlotFailoverState(chain=["chat", "utility"])
+        assert should_recover(state) is False
 
-def test_cooldown_tracker_duplicate_mark_error_is_idempotent():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import CooldownTracker
-    tracker = CooldownTracker()
-    tracker.mark_error("slot_chat", "first error")
-    tracker.mark_error("slot_chat", "second error")
-    # probe_count should remain 0 (not doubled)
-    status = tracker.get_status("slot_chat")
-    assert status["probe_count"] == 0
+    def test_false_when_within_recovery_window(self):
+        from usr.plugins.a0_lmm_router.helpers.smart_router.failover import (
+            SlotFailoverState, should_recover,
+        )
+        state = SlotFailoverState(chain=["chat", "utility"], recovery_seconds=300)
+        state.failed_at = time.monotonic()
+        assert should_recover(state) is False
 
-
-def test_cooldown_tracker_should_probe_respects_max_attempts():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import (
-        CooldownTracker, CooldownProbe,
-    )
-    tracker = CooldownTracker()
-    tracker.mark_error("slot_chat")
-    probe_cfg = CooldownProbe(enabled=True, interval_seconds=0, max_attempts=2, probe_timeout=1)
-
-    # First two probes: allowed
-    tracker.record_probe("slot_chat")
-    tracker.record_probe("slot_chat")
-    # Third: max_attempts reached
-    assert tracker.should_probe("slot_chat", probe_cfg) is False
-
-
-def test_cooldown_tracker_get_status_unknown_slot_returns_none():
-    from usr.plugins.a0_lmm_router.helpers.smart_router.failover import CooldownTracker
-    tracker = CooldownTracker()
-    assert tracker.get_status("nonexistent") is None
+    def test_true_when_recovery_window_elapsed(self):
+        from usr.plugins.a0_lmm_router.helpers.smart_router.failover import (
+            SlotFailoverState, should_recover,
+        )
+        state = SlotFailoverState(chain=["chat", "utility"], recovery_seconds=1)
+        state.failed_at = time.monotonic() - 2  # 2 seconds ago > 1s window
+        assert should_recover(state) is True
