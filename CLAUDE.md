@@ -34,7 +34,8 @@ sys.path.insert(0, str(REPO_ROOT))
 
 ```
 a0_lmm_router/
-├── api/                        # 27 REST handlers — POST /plugins/a0_lmm_router/<name>
+├── api/                        # REST handlers — POST /plugins/a0_lmm_router/<name>
+│   │                           # incl. fleet_reconnect.py (HTTP fleet detect/reconnect)
 ├── helpers/
 │   ├── llama_cpp_manager.py    # BackendManager singleton (core orchestrator, line 840)
 │   │                           # ServerConfig dataclass (line 58)
@@ -48,9 +49,10 @@ a0_lmm_router/
 │   │   ├── failover.py         # FailoverReason (line 66), CooldownTracker (line 305)
 │   │   ├── workflow_registry.py  # WorkflowRegistry — loaded but NOT wired in
 │   │   └── session_models.py
-│   ├── fleet_mode.py           # detect_fleet_mode() — router vs three_slot vs conflict
+│   ├── fleet_mode.py           # detect_fleet_mode() — docker-ps based (host only)
+│   ├── router_probe.py         # detect_fleet_http() — HTTP /props probe (works inside A0)
 │   ├── fleet_models.py         # host-helper adapter for model install/delete/assign
-│   ├── compute_monitor.py      # GPU/CPU/RAM via nvidia-smi + psutil
+│   ├── compute_monitor.py      # GPU/CPU/RAM via nvidia-smi + psutil; router-aware slots
 │   ├── model_recommender.py    # hardware-aware model selection
 │   ├── slot_recommender.py     # VRAM-aware slot count recommendations
 │   ├── rate_limit_retry.py     # circuit breaker + exponential backoff decorator
@@ -366,3 +368,7 @@ Common patterns:
 **Mutating MCP tools are off by default:** `start_fleet`, `start_slot`, `stop_slot` are not registered unless `allow_mutating_tools=True` in config or `MCP_ALLOW_MUTATING_TOOLS=1` is set. This is intentional for security.
 
 **`backend: remote` cannot manage containers:** Calling `start_slot()` / `stop_slot()` on `RemoteBackend` only registers/deregisters health tracking. Actual container control goes through `tools/lmm_host_helper.py` (Windows host bridge) or direct `docker compose` commands on the host machine.
+
+**Config can lie about what's running:** `conf/llama_cpp_servers.yaml` describes the *intended* fleet, not the *actual* one. If an operator starts Router Mode (`docker-compose.lmm.router.yml`) while the YAML still lists `slot_chat/utility/embedding`, the old config-driven code path showed stale/empty slots. The fix is HTTP reality-detection: `helpers/router_probe.py:detect_fleet_http()` probes `GET /props` (a native router returns `{"role":"router"}`) and works **inside the A0 container** (no Docker socket, unlike `fleet_mode.detect_fleet_mode()` which shells out to `docker ps`). `compute_monitor._query_slots()` and `api/router_aliases.py` both consult it and synthesize a `slot_router` when a live router is found. The dashboard's **🔌 Reconnect** button hits `api/fleet_reconnect.py`, which re-probes and resets the `BackendManager` singleton.
+
+**Router preset INI is picky (image b8840-9e5647aff):** `--models-preset` accepts only `alias =`, `model =`, and `embedding = true` per section. `ctx_size`/`n_gpu_layers`/`flash_attn`/`cache_type_*` are rejected ("option '<key>' not recognized in preset"). `model =` must be an ABSOLUTE container path (`/models/...`); it is NOT joined with `--models-dir`. Embeddings need `embedding = true` in that model's section or the router returns 501. The preset bind cannot live under the read-only `/models` mount — it's mounted at `/etc/llama/preset.ini`.

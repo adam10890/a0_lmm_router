@@ -53,6 +53,7 @@ function createDashboardStore() {
     setRouterDefault: `${API_BASE}/set_router_default`,
     routerAliases:    `${API_BASE}/router_aliases`,
     setRouterAliasModel: `${API_BASE}/set_router_alias_model`,
+    fleetReconnect:   `${API_BASE}/fleet_reconnect`,
   };
 
   return {
@@ -71,6 +72,7 @@ function createDashboardStore() {
     swapInProgress: {},       // keyed by slot_id — true when assigning/restarting
     slotErrors: {},            // keyed by slot_id — error message from last assign/load
     fleetMode: { mode: 'unknown', router_running: false, three_slot_running: false, containers: {} },
+    reconnecting: false,       // true while reconnectFleet() is probing
     roleBindings: [],
     roleBindingsSource: '',
     roleBindingsError: '',
@@ -651,6 +653,40 @@ function createDashboardStore() {
     async refreshFleetAndBindings() {
       this.showToast('Refreshing fleet status…', 'info', 2000);
       await Promise.all([this._fetchStats(), this._fetchRoleBindings()]);
+    },
+
+    // Stronger than refresh: probes the fleet over HTTP (no Docker socket
+    // needed, works inside the A0 container), resets the BackendManager so
+    // its cached slot view is rebuilt, then re-fetches everything. This is
+    // what recovers the dashboard when a router was started out-of-band and
+    // the config still describes the old 3-slot fleet.
+    async reconnectFleet() {
+      this.reconnecting = true;
+      this.showToast('Reconnecting to LMM fleet…', 'info', 3000);
+      try {
+        const d = await _a0ApiCall(ENDPOINTS.fleetReconnect, { reset: true });
+        if (d.ok) {
+          const mode = d.mode || 'unknown';
+          if (mode === 'router' && d.router) {
+            const loaded = (d.router.loaded || []).join(', ') || 'none loaded yet';
+            this.showToast(
+              `Router detected on :${d.router.port} — ${d.router.model_count} models registered (${loaded})`,
+              'ok', 6000);
+          } else if (mode === 'three_slot') {
+            this.showToast('3-slot fleet detected and reconnected.', 'ok', 4000);
+          } else {
+            this.showToast('No llama.cpp fleet is answering. Is a container running?', 'warn', 6000);
+          }
+        } else {
+          this.showToast(d.error || 'Reconnect failed', 'error', 6000);
+        }
+      } catch (e) {
+        this.showToast(e.message || 'Reconnect connection error', 'error', 6000);
+      } finally {
+        // Always re-pull state so the UI reflects whatever the probe found.
+        await Promise.all([this._fetchStats(), this._fetchRoleBindings()]);
+        this.reconnecting = false;
+      }
     },
 
     async igniteRouterFleet() {

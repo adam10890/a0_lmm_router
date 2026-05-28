@@ -53,6 +53,31 @@ This plugin replaces the deprecated `a0_lmm` and `a0_smart_router` plugins with 
 - **Dashboard** (`dashboard.html`) — real-time mission-control view of GPU, CPU, RAM, and slot health with 5s polling
 - **Dev Tracker** (`dev-tracker.html`) — visual development status radiator (phases, bugs, APIs, self-review results)
 
+### HTTP-based fleet detection & Reconnect (v1.3+)
+
+The plugin trusts `conf/llama_cpp_servers.yaml`, but the **running** fleet can
+differ from what the config describes — most commonly when an operator starts
+Router Mode out-of-band while the YAML still lists the 3 fixed slots. In that
+case the dashboard used to show stale/empty data because it only knew about
+the configured slots.
+
+The plugin now reconciles config against reality **over HTTP**, which works
+even when it runs inside the Agent Zero container (no Docker socket required):
+
+- `helpers/router_probe.py` probes `GET /props` (a native router answers
+  `{"role":"router",...}`), `GET /health`, and `GET /v1/models`.
+- `helpers/compute_monitor._query_slots()` returns a synthetic `slot_router`
+  (with `router_mode: true` and the live registered model list) whenever a
+  router is detected — lighting up the dashboard's ROUTER badge/panel.
+- `api/router_aliases.py` falls back to an HTTP probe when the config has no
+  `slot_router`, so role bindings populate from the live router.
+- `api/fleet_reconnect.py` backs the dashboard **🔌 Reconnect** button: it
+  re-probes the fleet, resets the `BackendManager` singleton, and reports the
+  detected mode. Use it whenever "the container is running but the dashboard
+  is blank."
+
+Detection signal of record: **`GET /props` → `role == "router"`**.
+
 ### MCP Server (v1.3+)
 
 The plugin includes a **Model Context Protocol (MCP) server** that exposes router capabilities to any MCP-aware client (Agent Zero, Claude Desktop, Cursor, mcp-inspector, etc.). Runs as Streamable HTTP on port 8095, spec version `2025-06-18`.
