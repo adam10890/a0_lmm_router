@@ -105,6 +105,12 @@ services:
       - "${ROUTER_PARALLEL:-1}"
       - "--batch-size"
       - "${ROUTER_BATCH_SIZE:-512}"
+      - "--ubatch-size"
+      - "${ROUTER_UBATCH_SIZE:-1024}"
+      - "--cache-type-k"
+      - "${ROUTER_CACHE_TYPE_K:-q8_0}"
+      - "--cache-type-v"
+      - "${ROUTER_CACHE_TYPE_V:-q8_0}"
       - "--flash-attn"
       - "${ROUTER_FLASH_ATTN:-on}"
 
