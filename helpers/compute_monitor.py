@@ -395,22 +395,46 @@ def _query_container_model_id(host: str, port: int, fallback: str) -> str:
     return fallback
 
 
+def _derive_fleet_mode_from_slots(fleet_mode: Dict[str, Any], slots: List[SlotInfo]) -> Dict[str, Any]:
+    """Use HTTP-probed slots when Docker-based fleet detection is unavailable."""
+    mode = str(fleet_mode.get("mode") or "unknown")
+    if mode not in ("idle", "unknown"):
+        return fleet_mode
+
+    running_slots = [slot for slot in slots if slot.running]
+    if not running_slots:
+        return fleet_mode
+
+    derived = dict(fleet_mode)
+    derived["detected_via"] = "http"
+    if any(slot.router_mode for slot in running_slots):
+        derived["mode"] = "router"
+        derived["router_running"] = True
+        derived["three_slot_running"] = False
+    else:
+        derived["mode"] = "three_slot"
+        derived["router_running"] = False
+        derived["three_slot_running"] = True
+    return derived
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 def get_compute_snapshot() -> Dict[str, Any]:
     """Return a serialisable dict with current compute + LMM stats."""
+    slots = _query_slots()
     snap = ComputeSnapshot(
         ts=time.time(),
         gpus=_query_gpus(),
         cpu=_query_cpu(),
-        slots=_query_slots(),
+        slots=slots,
     )
     return {
         "ts": snap.ts,
         "gpus": [asdict(g) for g in snap.gpus],
         "cpu": asdict(snap.cpu),
         "slots": [asdict(s) for s in snap.slots],
-        "fleet_mode": detect_fleet_mode(),
+        "fleet_mode": _derive_fleet_mode_from_slots(detect_fleet_mode(), snap.slots),
     }

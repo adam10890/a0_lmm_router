@@ -126,6 +126,26 @@ asyncio.run(main())
 - Restart: `docker exec agent-zero-2 pkill -f "launcher.py mcp"` then re-run the launcher command
 - `stop_agent_zero.bat` shuts down the MCP server before stopping the container
 
+### Standalone OpenAI-Compatible Provider
+
+The router service can also run outside the Agent Zero WebUI as a local
+OpenAI-compatible provider:
+
+```powershell
+.\scripts\run_provider.ps1 -InstallDeps
+```
+
+or on WSL/Linux:
+
+```bash
+./scripts/run_provider.sh --install-deps
+```
+
+The provider exposes `GET /health`, `POST /routing/request`, and
+`POST /v1/chat/completions`. Set `A0_LMM_ROUTER_API_KEY` or pass `-ApiKey` /
+`--api-key` to require `Authorization: Bearer <key>` on all non-health
+endpoints. Full runbook: `docs/STANDALONE_PROVIDER.md`.
+
 ---
 
 ## Architecture

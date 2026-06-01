@@ -102,6 +102,15 @@ class TestHealthEndpoint:
         assert "config_path" in body
         assert str(tmp_path) in body["config_path"]
 
+    def test_health_remains_open_when_api_key_configured(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("A0_LMM_ROUTER_API_KEY", "local-secret")
+        client = _make_client(tmp_path)
+
+        resp = client.get("/health")
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
 
 # ---------------------------------------------------------------------------
 # GET /slots
@@ -371,6 +380,40 @@ class TestImportSafety:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind(("127.0.0.1", 8096))  # would fail if port were taken
+
+
+# ---------------------------------------------------------------------------
+# service.__main__ bind safety
+# ---------------------------------------------------------------------------
+
+class TestBindAuthGuard:
+    def test_public_bind_without_auth_is_rejected(self, monkeypatch):
+        from service.__main__ import _validate_bind_auth
+
+        monkeypatch.delenv("A0_LMM_ROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("A0_LMM_ROUTER_ALLOW_PUBLIC_NO_AUTH", raising=False)
+
+        try:
+            _validate_bind_auth("0.0.0.0")
+            assert False, "public no-auth bind should fail"
+        except RuntimeError as exc:
+            assert "A0_LMM_ROUTER_API_KEY" in str(exc)
+
+    def test_public_bind_with_api_key_is_allowed(self, monkeypatch):
+        from service.__main__ import _validate_bind_auth
+
+        monkeypatch.setenv("A0_LMM_ROUTER_API_KEY", "local-secret")
+        monkeypatch.delenv("A0_LMM_ROUTER_ALLOW_PUBLIC_NO_AUTH", raising=False)
+
+        _validate_bind_auth("0.0.0.0")
+
+    def test_public_bind_with_explicit_no_auth_override_is_allowed(self, monkeypatch):
+        from service.__main__ import _validate_bind_auth
+
+        monkeypatch.delenv("A0_LMM_ROUTER_API_KEY", raising=False)
+        monkeypatch.setenv("A0_LMM_ROUTER_ALLOW_PUBLIC_NO_AUTH", "1")
+
+        _validate_bind_auth("0.0.0.0")
 
 
 # ---------------------------------------------------------------------------
