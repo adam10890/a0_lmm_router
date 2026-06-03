@@ -6,7 +6,9 @@ import os
 import sys
 import urllib.request
 import configparser
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
+
+import yaml
 
 _PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PLUGIN_ROOT not in sys.path:
@@ -22,6 +24,7 @@ except ImportError:
 try:
     from usr.plugins.a0_lmm_router.helpers.llama_cpp_manager import BackendManager
     from usr.plugins.a0_lmm_router.helpers import fleet_models
+    from usr.plugins.a0_lmm_router.helpers.router_probe import detect_fleet_http
 except ImportError:
     _here = os.path.dirname(os.path.abspath(__file__))
     _plugin_root = os.path.dirname(_here)
@@ -29,8 +32,50 @@ except ImportError:
         sys.path.insert(0, _plugin_root)
     from helpers.llama_cpp_manager import BackendManager
     from helpers import fleet_models
+    from helpers.router_probe import detect_fleet_http
 
 ROLES = ("chat", "utility", "embedding")
+
+
+def _resolve_conf_path() -> str:
+    """Locate llama_cpp_servers.yaml (env override → root → plugin fallback)."""
+    env_conf = os.environ.get("A0_LMM_ROUTER_CONFIG", "").strip()
+    if env_conf and os.path.exists(env_conf):
+        return env_conf
+    here = Path(__file__).resolve()
+    plugin_conf = str(here.parents[1] / "conf" / "llama_cpp_servers.yaml")
+    root_conf = str(here.parents[4] / "conf" / "llama_cpp_servers.yaml")
+    return root_conf if os.path.exists(root_conf) else plugin_conf
+
+
+def _load_config() -> dict:
+    try:
+        with open(_resolve_conf_path(), "r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except Exception:
+        return {}
+
+
+def _synthesize_router_slot_cfg() -> dict | None:
+    """When the config has no router slot, detect a live router over HTTP and
+    build an ad-hoc slot_cfg so the dashboard still gets live role bindings.
+
+    Returns None when no router is reachable.
+    """
+    cfg = _load_config()
+    lmm_hosts = (cfg.get("global", {}) or {}).get("lmm_hosts", {}) or {}
+    detected = detect_fleet_http(lmm_hosts or None)
+    if detected.get("mode") != "router" or not detected.get("router"):
+        return None
+    defaults = cfg.get("slot_defaults", {}) or {}
+    return {
+        "id": "slot_router",
+        "port": detected.get("primary_port", 8080),
+        "router_mode": True,
+        "router_models_dir": str(defaults.get("router_models_dir", "") or ""),
+        "router_models_preset": str(defaults.get("router_models_preset", "") or ""),
+        "_detected_via": "http",
+    }
 
 
 def _parse_preset_file(preset_path: str) -> list[dict]:
@@ -146,10 +191,31 @@ def _fallback_bindings(slot_cfg: dict) -> dict[str, dict]:
 class RouterAliases(ApiHandler):
     async def process(self, input: dict, request: Request) -> dict:
         slot_id = input.get("slot_id", "slot_router")
-        mgr = BackendManager.get_instance()
-        slot_cfg = mgr._slot_configs.get(slot_id)
+
+        # 1) Prefer the configured slot (BackendManager view of the YAML).
+        slot_cfg = None
+        try:
+            mgr = BackendManager.get_instance()
+            slot_cfg = mgr._slot_configs.get(slot_id)
+        except Exception:
+            slot_cfg = None
+
+        detected_via_http = False
+        # 2) Fall back to HTTP reality: if the config has no router slot (or it
+        #    is not flagged router_mode), but a router is actually answering on
+        #    the chat port, synthesize a slot_cfg so the dashboard still works.
+        #    This is what lets the plugin "see" a router started out-of-band.
+        if not slot_cfg or not slot_cfg.get("router_mode"):
+            synthesized = _synthesize_router_slot_cfg()
+            if synthesized is not None:
+                slot_cfg = synthesized
+                detected_via_http = True
+
         if not slot_cfg:
-            return {"ok": False, "error": f"Slot '{slot_id}' not found"}
+            return {
+                "ok": False,
+                "error": f"Slot '{slot_id}' not found and no live router detected",
+            }
         if not slot_cfg.get("router_mode"):
             return {"ok": False, "error": f"Slot '{slot_id}' is not in router mode"}
 
@@ -167,6 +233,7 @@ class RouterAliases(ApiHandler):
             "ok": True,
             "slot_id": slot_id,
             "source": source,
+            "detected_via_http": detected_via_http,
             "roles": [bindings[role] for role in ROLES],
             "bindings": bindings,
             "models": models_result.get("models", {}) if models_result.get("ok") else {},

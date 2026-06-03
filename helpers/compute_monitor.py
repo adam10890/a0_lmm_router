@@ -20,8 +20,10 @@ import yaml
 
 try:
     from usr.plugins.a0_lmm_router.helpers.fleet_mode import detect_fleet_mode
+    from usr.plugins.a0_lmm_router.helpers.router_probe import detect_fleet_http
 except Exception:
     from fleet_mode import detect_fleet_mode
+    from router_probe import detect_fleet_http
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,12 @@ class SlotInfo:
     router_models_preset: str = ""
     router_models_max: int = 1
     router_models_autoload: bool = True
+    # Populated only for a detected router slot: the aliases/models the
+    # running router currently has registered (from /v1/models over HTTP).
+    registered_models: Optional[List[str]] = None
+    # "config" = slot came from llama_cpp_servers.yaml; "http" = synthesized
+    # from a live HTTP probe because the running fleet differs from config.
+    source: str = "config"
 
 @dataclass
 class ComputeSnapshot:
@@ -283,6 +291,41 @@ def _query_slots() -> List[SlotInfo]:
         global_config = data.get("global", {}) or {}
         lmm_hosts = global_config.get("lmm_hosts", {}) or {}
 
+        # ── Reality check: is a native Router actually running? ──────────
+        # The plugin trusts conf/llama_cpp_servers.yaml, but the running
+        # fleet can differ (e.g. operator started Router Mode out-of-band).
+        # Detect a live router over HTTP (works inside the A0 container, no
+        # Docker socket) and, if found, return a single synthetic router
+        # slot instead of the stale fixed-slot config. This is what lights
+        # up the dashboard's ROUTER badge/panel and keeps it honest.
+        try:
+            detected = detect_fleet_http(lmm_hosts or None)
+        except Exception:
+            detected = {"mode": "unknown"}
+
+        if detected.get("mode") == "router" and detected.get("router"):
+            router = detected["router"]
+            defaults = data.get("slot_defaults", {}) or {}
+            model_names = [m.get("display") or m.get("id") for m in router.get("models", [])]
+            loaded = [m.get("display") or m.get("id") for m in router.get("models", []) if m.get("loaded")]
+            return [SlotInfo(
+                id="slot_router",
+                role="router",
+                model_id=(", ".join(loaded) if loaded
+                          else f"{len(model_names)} models registered"),
+                port=int(router.get("port") or detected.get("primary_port") or 8080),
+                running=bool(router.get("reachable")),
+                healthy=bool(router.get("healthy")),
+                router_mode=True,
+                router_models_dir=str(defaults.get("router_models_dir", "") or ""),
+                router_models_preset=str(defaults.get("router_models_preset", "") or ""),
+                router_models_max=int(router.get("max_instances") or 1),
+                router_models_autoload=bool(router.get("models_autoload"))
+                if router.get("models_autoload") is not None else True,
+                registered_models=model_names,
+                source="http",
+            )]
+
         for slot in data.get("active_slots", []) or []:
             if not slot or not slot.get("enabled", True):
                 continue
@@ -352,22 +395,46 @@ def _query_container_model_id(host: str, port: int, fallback: str) -> str:
     return fallback
 
 
+def _derive_fleet_mode_from_slots(fleet_mode: Dict[str, Any], slots: List[SlotInfo]) -> Dict[str, Any]:
+    """Use HTTP-probed slots when Docker-based fleet detection is unavailable."""
+    mode = str(fleet_mode.get("mode") or "unknown")
+    if mode not in ("idle", "unknown"):
+        return fleet_mode
+
+    running_slots = [slot for slot in slots if slot.running]
+    if not running_slots:
+        return fleet_mode
+
+    derived = dict(fleet_mode)
+    derived["detected_via"] = "http"
+    if any(slot.router_mode for slot in running_slots):
+        derived["mode"] = "router"
+        derived["router_running"] = True
+        derived["three_slot_running"] = False
+    else:
+        derived["mode"] = "three_slot"
+        derived["router_running"] = False
+        derived["three_slot_running"] = True
+    return derived
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 def get_compute_snapshot() -> Dict[str, Any]:
     """Return a serialisable dict with current compute + LMM stats."""
+    slots = _query_slots()
     snap = ComputeSnapshot(
         ts=time.time(),
         gpus=_query_gpus(),
         cpu=_query_cpu(),
-        slots=_query_slots(),
+        slots=slots,
     )
     return {
         "ts": snap.ts,
         "gpus": [asdict(g) for g in snap.gpus],
         "cpu": asdict(snap.cpu),
         "slots": [asdict(s) for s in snap.slots],
-        "fleet_mode": detect_fleet_mode(),
+        "fleet_mode": _derive_fleet_mode_from_slots(detect_fleet_mode(), snap.slots),
     }

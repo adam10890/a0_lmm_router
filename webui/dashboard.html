@@ -477,6 +477,10 @@
           <div class="fleet-mode-actions">
             <button class="btn btn-ghost" type="button" @click="refreshFleetAndBindings()"
                     title="Refresh fleet detection and role bindings">↻ Refresh</button>
+            <button class="btn btn-accent" type="button" @click="reconnectFleet()"
+                    :disabled="reconnecting"
+                    title="Probe the LMM fleet over HTTP and re-establish the connection (works even when running as an A0 plugin)"
+                    x-text="reconnecting ? 'Reconnecting…' : '🔌 Reconnect'"></button>
             <template x-if="effectiveFleetMode === 'idle' || effectiveFleetMode === 'unknown' || effectiveFleetMode === 'router_config'">
               <button class="btn btn-accent" type="button" @click="igniteRouterFleet()"
                       :disabled="igniteState === 'pending'"
