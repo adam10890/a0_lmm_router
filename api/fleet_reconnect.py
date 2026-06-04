@@ -17,35 +17,26 @@ from __future__ import annotations
 
 import os
 import sys
-from pathlib import Path
 
 from flask import Request
 from helpers.api import ApiHandler
 
 try:
+    from usr.plugins.a0_lmm_router.helpers.conf_resolver import resolve_conf_path
     from usr.plugins.a0_lmm_router.helpers.router_probe import detect_fleet_http
 except ImportError:
     _here = os.path.dirname(os.path.abspath(__file__))
     _plugin_root = os.path.dirname(_here)
     if _plugin_root not in sys.path:
         sys.path.insert(0, _plugin_root)
+    from helpers.conf_resolver import resolve_conf_path
     from helpers.router_probe import detect_fleet_http
-
-
-def _resolve_conf_path() -> str:
-    env_conf = os.environ.get("A0_LMM_ROUTER_CONFIG", "").strip()
-    if env_conf and os.path.exists(env_conf):
-        return env_conf
-    here = Path(__file__).resolve()
-    plugin_conf = str(here.parents[1] / "conf" / "llama_cpp_servers.yaml")
-    root_conf = str(here.parents[4] / "conf" / "llama_cpp_servers.yaml")
-    return root_conf if os.path.exists(root_conf) else plugin_conf
 
 
 def _read_lmm_hosts() -> dict:
     try:
         import yaml
-        with open(_resolve_conf_path(), "r", encoding="utf-8") as f:
+        with open(resolve_conf_path(__file__), "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         return (data.get("global", {}) or {}).get("lmm_hosts", {}) or {}
     except Exception:

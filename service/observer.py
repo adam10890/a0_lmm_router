@@ -20,6 +20,14 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]  # → / in dev, /a0 in product
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+try:
+    from usr.plugins.a0_lmm_router.helpers.conf_resolver import resolve_conf_path
+except ImportError:
+    _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+    if str(_PLUGIN_ROOT) not in sys.path:
+        sys.path.insert(0, str(_PLUGIN_ROOT))
+    from helpers.conf_resolver import resolve_conf_path
+
 # Patterns that identify sensitive config fields to redact.
 _SENSITIVE_PATTERNS = (
     "api_key", "token", "secret", "password", "bearer", "auth_key",
@@ -46,19 +54,6 @@ def _redact(obj: Any, depth: int = 0) -> Any:
     return obj
 
 
-def _resolve_config_path() -> str:
-    """Discover config file via env var then standard locations."""
-    env_conf = os.environ.get("A0_LMM_ROUTER_CONFIG", "").strip()
-    here = Path(__file__).resolve()
-    plugin_conf = str(here.parents[1] / "conf" / "llama_cpp_servers.yaml")
-    root_conf = str(here.parents[4] / "conf" / "llama_cpp_servers.yaml")
-    if env_conf and os.path.exists(env_conf):
-        return env_conf
-    if os.path.exists(root_conf):
-        return root_conf
-    return plugin_conf
-
-
 class ObserverBackend:
     """
     Read-only view of the fleet.
@@ -68,7 +63,7 @@ class ObserverBackend:
     """
 
     def __init__(self, config_path: Optional[str] = None) -> None:
-        self.config_path = config_path or _resolve_config_path()
+        self.config_path = config_path or resolve_conf_path(__file__)
         self._raw: Dict[str, Any] = {}
         self._load()
 
@@ -80,7 +75,14 @@ class ObserverBackend:
 
     def _make_manager(self):
         """Instantiate a fresh BackendManager from config (not the singleton)."""
-        from usr.plugins.a0_lmm_router.helpers.llama_cpp_manager import BackendManager
+        try:
+            from usr.plugins.a0_lmm_router.helpers.llama_cpp_manager import BackendManager
+        except ImportError as exc:
+            raise ImportError(
+                "BackendManager not found. In standalone mode, install the "
+                "a0_lmm_router package path or use observer endpoints that do "
+                "not require routing decisions."
+            ) from exc
         return BackendManager(self.config_path)
 
     # ------------------------------------------------------------------
@@ -123,6 +125,8 @@ class ObserverBackend:
                 "model_id": slot.get("model_id"),
                 "router_mode": slot.get("router_mode", False),
                 "context_size": slot.get("context_size"),
+                "router_models_preset": slot.get("router_models_preset", ""),
+                "router_models_max": slot.get("router_models_max"),
             })
 
         return slots

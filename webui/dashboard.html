@@ -1289,7 +1289,7 @@
                 <div class="install-bar-wrap">
                   <div class="install-bar-fill" :style="'width:' + installForm.progress + '%'"></div>
                 </div>
-                <div class="install-progress" x-text="installForm.progress.toFixed(1) + '% — ' + installForm.status"></div>
+                <div class="install-progress" x-text="installForm.progressLabel || (installForm.progress.toFixed(1) + '% — ' + (installForm.status || '…'))"></div>
               </div>
             </template>
             <div x-show="installForm.error" class="lmm-msg err" style="margin-top:8px" x-text="installForm.error"></div>

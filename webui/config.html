@@ -500,7 +500,8 @@ function lmmConfig() {
         for (const jobId of jobIds) {
           const d = await lmmApiCall('job_status', { job_id: jobId });
           if (d.ok && d.job) {
-            if (d.job.status === 'completed' || d.job.status === 'failed' || d.job.status === 'cancelled') {
+            const st = d.job.status;
+            if (st === 'done' || st === 'completed' || st === 'error' || st === 'failed' || st === 'cancelled') {
               continue;
             }
             jobs.push(d.job);

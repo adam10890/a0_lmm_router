@@ -17,10 +17,25 @@ active_slots:
     flash_attention: on
     enabled: true
     router_mode: true
-    router_models_dir: "/models"
+    router_models_dir: ""      # preset-only; do not expose every GGUF under /models
     router_models_autoload: true
     router_models_preset: "/etc/llama/preset.ini"
     router_models_max: 2
+
+  # Optional CPU utility worker for subagents/background work.
+  # Start docker/docker-compose.lmm.cpu-worker.yml and set enabled: true.
+  - id: utility_cpu
+    port: 8089
+    role: utility
+    model_id: utility_cpu
+    context_size: 32768
+    gpu_layers: 0
+    batch_size: 256
+    threads: 16
+    parallel_slots: 1
+    flash_attention: false
+    enabled: false
+    router_mode: false
 
 # Example: slot_chat with MTP enabled per PR #22673
 # https://github.com/ggml-org/llama.cpp/pull/22673
@@ -111,6 +126,10 @@ slot_defaults:
 global:
   auto_start: false
   backend: remote
+  failover_chains:
+    chat: [slot_router, utility_cpu]
+    utility: [utility_cpu, slot_router]
+    embed: [slot_router]
   lmm_hosts:
     chat: host.docker.internal:8080
     utility: host.docker.internal:8088
@@ -152,6 +171,16 @@ hardware:
     max_concurrent_gpu_models: 3
     max_concurrent_cpu_models: 1
     max_total_models: 4
+
+context_policy:
+  # Role context values are minimums. The Router Mode preset renderer raises
+  # hard_ctx above these values when model metadata and VRAM allow it.
+  effective_ctx_ratio: 0.70
+  vram_safety_margin_gb: 2.5
+  role_min_ctx:
+    chat: 65536
+    utility: 16384
+    embedding: 8192
 
 # -----------------------------------------------------------------
 # Ephemeral per-conversation containers

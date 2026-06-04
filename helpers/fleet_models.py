@@ -98,6 +98,27 @@ def delete_model(model_id: str) -> dict:
     return _helper_request("POST", "/models/delete", {"model_id": model_id})
 
 
+def warm_params_cache(force_refresh: bool = False, restart: bool = True) -> dict:
+    """Plan/cache llama.cpp params for all fleet slots and refresh models_preset.ini."""
+    return _helper_request(
+        "POST",
+        "/router/warm_params",
+        {"force_refresh": force_refresh, "restart": restart},
+        timeout=180,
+    )
+
+
+def record_params_success(role: str = "", model_path: str = "", all_roles: bool = False) -> dict:
+    """Mark the last successful model+params for a role (seeds future planning)."""
+    body: dict = {}
+    if all_roles:
+        body["all"] = True
+    else:
+        body["role"] = role
+        body["model_path"] = model_path
+    return _helper_request("POST", "/router/record_success", body, timeout=30)
+
+
 def assign_model(slot: str, model_id: str, apply_now: bool = True) -> dict:
     """Assign a model to a slot (chat/utility/embed)."""
     return _helper_request("POST", "/models/assign", {

@@ -1,12 +1,12 @@
 # docker-compose.lmm.router.yml — llama.cpp native Router Mode
 #
 # ALTERNATIVE to docker-compose.lmm.yml (the 3-slot fleet). Runs a SINGLE
-# llama.cpp container that registers multiple GGUFs via --models-dir and
-# hot-swaps between them on demand based on the "model" field in API
+# llama.cpp container that registers curated GGUF aliases via --models-preset
+# and hot-swaps between them on demand based on the "model" field in API
 # requests. Same client-facing port (8080) as the chat slot, so existing
 # clients that point at host.docker.internal:8080 keep working.
 #
-# Reference: llama.cpp Router Mode (--models-dir / --models-preset).
+# Reference: llama.cpp Router Mode (--models-preset).
 # Verified flag support in image ghcr.io/ggml-org/llama.cpp:server-cuda
 # as of 2026-05-21 — all four Router flags present in --help.
 #
@@ -80,8 +80,6 @@ services:
       - "--port"
       - "8080"
       # ── Router Mode flags ────────────────────────────────────────────
-      - "--models-dir"
-      - "${ROUTER_MODELS_DIR:-/models}"
       - "--models-preset"
       - "${ROUTER_MODELS_PRESET:-/etc/llama/preset.ini}"
       - "--models-max"
@@ -94,11 +92,7 @@ services:
       # clarity). VRAM stays bounded by --models-max.
       - "--models-autoload"
       # ── Shared inference defaults ───────────────────────────────────
-      # Each preset entry can override these per-alias.
-      - "--ctx-size"
-      - "${ROUTER_CTX_SIZE:-65536}"
-      - "--n-gpu-layers"
-      - "${ROUTER_GPU_LAYERS:-999}"
+      # Per-model ctx/gpu/KV/flash flags live in preset.ini.
       - "--parallel"
       # llama.cpp divides --ctx-size across parallel slots. Keep the default
       # at 1 so a 64K Agent Zero conversation gets the full 64K window.
@@ -107,12 +101,7 @@ services:
       - "${ROUTER_BATCH_SIZE:-512}"
       - "--ubatch-size"
       - "${ROUTER_UBATCH_SIZE:-1024}"
-      - "--cache-type-k"
-      - "${ROUTER_CACHE_TYPE_K:-q8_0}"
-      - "--cache-type-v"
-      - "${ROUTER_CACHE_TYPE_V:-q8_0}"
-      - "--flash-attn"
-      - "${ROUTER_FLASH_ATTN:-on}"
+      - "--metrics"
 
 networks:
   a0-lmm-net:

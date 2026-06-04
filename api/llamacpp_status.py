@@ -2,16 +2,17 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import socket
 import time
-
-from pathlib import Path
 
 import aiohttp
 from flask import Request
 
 from helpers.api import ApiHandler
+try:
+    from usr.plugins.a0_lmm_router.helpers.conf_resolver import resolve_conf_path
+except ImportError:
+    from helpers.conf_resolver import resolve_conf_path
 
 
 HEALTH_TIMEOUT_SEC = 2.0
@@ -50,28 +51,12 @@ async def _probe_http(host: str, port: int) -> dict:
         return {"reachable": False, "error": str(exc)}
 
 
-def _resolve_conf_path() -> str:
-    """Resolve llama_cpp_servers.yaml path without depending on `helpers.files`
-    (which transitively imports `simpleeval`, a package that ships broken in
-    the current agent0ai/agent-zero:latest image). Kept self-contained so the
-    plugin keeps working even when A0 core has import-chain issues."""
-    here = Path(__file__).resolve()
-    # .../usr/plugins/a0_lmm_router/api/llamacpp_status.py
-    #    parents[1] = a0_lmm_router, parents[4] = /a0
-    env_conf = os.environ.get("A0_LMM_ROUTER_CONFIG", "")
-    plugin_conf = str(here.parents[1] / "conf" / "llama_cpp_servers.yaml")
-    root_conf = str(here.parents[4] / "conf" / "llama_cpp_servers.yaml")
-    if env_conf and os.path.exists(env_conf):
-        return env_conf
-    return root_conf if os.path.exists(root_conf) else plugin_conf
-
-
 class LlamacppStatus(ApiHandler):
     async def process(self, input: dict, request: Request) -> dict:
         try:
             import yaml
 
-            conf_path = _resolve_conf_path()
+            conf_path = resolve_conf_path(__file__)
             with open(conf_path, "r", encoding="utf-8") as fh:
                 cfg = yaml.safe_load(fh) or {}
 

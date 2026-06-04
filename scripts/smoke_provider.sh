@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_URL="${BASE_URL:-http://127.0.0.1:8096}"
+BASE_URL="${BASE_URL:-http://127.0.0.1:9000}"
 API_KEY="${A0_LMM_ROUTER_API_KEY:-}"
 
 usage() {
@@ -9,7 +9,7 @@ usage() {
 Usage: scripts/smoke_provider.sh [options]
 
 Options:
-  --base-url URL    Provider URL, default http://127.0.0.1:8096
+  --base-url URL    Provider URL, default http://127.0.0.1:9000
   --api-key KEY     Bearer token for protected endpoints
   -h, --help        Show this help
 EOF
@@ -64,6 +64,8 @@ request() {
 }
 
 request "health" GET "/health" "" "200"
+
+request "fleet status" GET "/fleet/status" "" "200"
 
 request "routing request" POST "/routing/request" '{
   "agent_id": "phase9-smoke",

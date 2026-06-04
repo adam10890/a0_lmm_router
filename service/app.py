@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hmac
 import os
+import time
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 import aiohttp
@@ -20,6 +21,17 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 from starlette.routing import Route
 
+from .fleet_manager import (
+    AgentIdentity,
+    FleetQueue,
+    FleetStore,
+    QueueFull,
+    context_windows_from_slots,
+    fleet_config_from_env,
+    identity_from_headers,
+    slots_model_snapshot,
+    vram_unknown_summary,
+)
 from .observer import ObserverBackend
 from .routing_intent import RoutingIntentHandler, RoutingIntentRequest
 
@@ -131,10 +143,24 @@ def _role_from_chat_body(body: Dict[str, Any], routing: Dict[str, Any], metadata
     model = str(body.get("model", "") or "").lower()
     if "utility" in model or model in {"util", "coding", "debugging"}:
         return "utility"
+    task_type = str(_pick_routing_value(body, routing, metadata, "task_type", "") or "").lower()
+    if task_type in {
+        "background_worker",
+        "coding",
+        "debugging",
+        "planning",
+        "private_data_processing",
+        "research",
+        "sub_agent_task",
+        "tool_calling",
+    }:
+        return "utility"
+    if task_type == "embedding":
+        return "embed"
     return "chat"
 
 
-def _intent_from_chat_body(body: Dict[str, Any]) -> RoutingIntentRequest:
+def _intent_from_chat_body(body: Dict[str, Any], agent: Optional[AgentIdentity] = None) -> RoutingIntentRequest:
     routing = _dict_or_empty(body.get("routing"))
     metadata = _dict_or_empty(body.get("metadata"))
     role = _role_from_chat_body(body, routing, metadata)
@@ -164,15 +190,71 @@ def _intent_from_chat_body(body: Dict[str, Any]) -> RoutingIntentRequest:
         "input_classification": _pick_routing_value(body, routing, metadata, "input_classification"),
         "metadata": metadata,
     }
+    if agent is not None:
+        payload["agent_id"] = agent.agent_id
+        payload["agent_type"] = agent.agent_type
     return RoutingIntentRequest.model_validate(payload)
 
 
 def _forward_payload(body: Dict[str, Any], selected_model: Optional[str], *, stream: bool) -> Dict[str, Any]:
     payload = {k: v for k, v in body.items() if k not in _ROUTING_ONLY_KEYS}
     payload["stream"] = stream
-    if not payload.get("model"):
-        payload["model"] = selected_model or "local"
+    payload["model"] = selected_model or payload.get("model") or "local"
     return payload
+
+
+def _estimate_prompt_tokens(body: Dict[str, Any]) -> int:
+    """Small mixed-language token estimate for OpenAI-compatible payloads."""
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return 0
+    chars = 0
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            chars += len(content)
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict):
+                    text = part.get("text")
+                    if isinstance(text, str):
+                        chars += len(text)
+    return max(0, chars // 3)
+
+
+def _context_for_slot(
+    slots: list[Dict[str, Any]],
+    slot_id: Optional[str],
+    selected_model: Optional[str] = None,
+) -> Dict[str, Any]:
+    windows = context_windows_from_slots(slots)
+    for item in windows:
+        if item.get("slot_id") == slot_id and selected_model and item.get("alias") == selected_model:
+            return item
+    for item in windows:
+        if item.get("slot_id") == slot_id:
+            return item
+    return {}
+
+
+def _context_headers(context: Dict[str, Any], prompt_tokens: int, selected_model: Optional[str]) -> Dict[str, str]:
+    hard_ctx = context.get("hard_ctx")
+    effective_ctx = context.get("effective_ctx")
+    try:
+        occupancy = float(prompt_tokens) / float(hard_ctx) if hard_ctx else None
+    except (TypeError, ValueError, ZeroDivisionError):
+        occupancy = None
+    return {
+        "x-selected-model": selected_model or "",
+        "x-hard-ctx": str(hard_ctx) if hard_ctx else "unknown",
+        "x-effective-ctx": str(effective_ctx) if effective_ctx else "unknown",
+        "x-context-occupancy": f"{occupancy:.4f}" if occupancy is not None else "unknown",
+        "x-a0-router-hard-ctx": str(hard_ctx) if hard_ctx else "unknown",
+        "x-a0-router-effective-ctx": str(effective_ctx) if effective_ctx else "unknown",
+        "x-a0-router-context-occupancy": f"{occupancy:.4f}" if occupancy is not None else "unknown",
+    }
 
 
 async def _stream_upstream_response(resp: aiohttp.ClientResponse, session: aiohttp.ClientSession):
@@ -197,11 +279,18 @@ async def _stream_upstream_response(resp: aiohttp.ClientResponse, session: aioht
         await session.close()
 
 
-def create_app(config_path: Optional[str] = None) -> Starlette:
+def create_app(
+    config_path: Optional[str] = None,
+    *,
+    fleet_store: Optional[FleetStore] = None,
+    fleet_queue: Optional[FleetQueue] = None,
+) -> Starlette:
     """Return a configured Starlette app.  Safe to call multiple times (no side-effects)."""
     observer = ObserverBackend(config_path)
     intent_handler = RoutingIntentHandler(observer)
     api_key = _configured_api_key()
+    store = fleet_store or FleetStore()
+    queue = fleet_queue or FleetQueue()
 
     def protected(handler: Callable[[Request], Awaitable[Response]]) -> Callable[[Request], Awaitable[Response]]:
         async def wrapper(request: Request) -> Response:
@@ -234,6 +323,58 @@ def create_app(config_path: Optional[str] = None) -> Starlette:
         results = await observer.get_slots_health()
         return JSONResponse(results)
 
+    async def fleet_status(request: Request) -> JSONResponse:
+        slots = observer.get_slots()
+        snapshot = slots_model_snapshot(slots)
+        context_windows = context_windows_from_slots(slots)
+        store.record_model_snapshot("observer_slots", snapshot)
+        agents = store.list_agents()
+        return JSONResponse(
+            {
+                "ok": True,
+                "service": "a0-fleet-manager",
+                "version": _VERSION,
+                "config": fleet_config_from_env(),
+                "queue": queue.snapshot(),
+                "agents": {
+                    "count": len(agents),
+                    "items": agents,
+                },
+                "requests": store.request_summary(),
+                "vram": vram_unknown_summary(),
+                "slots": slots,
+                "model_residency": snapshot,
+                "context_windows": context_windows,
+                "docker_socket_enabled": False,
+            }
+        )
+
+    async def fleet_agents(request: Request) -> JSONResponse:
+        return JSONResponse({"ok": True, "agents": store.list_agents()})
+
+    async def fleet_agents_register(request: Request) -> JSONResponse:
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid_json", "detail": "request body is not valid JSON"}, status_code=400)
+
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "invalid_request_body"}, status_code=400)
+
+        try:
+            agent = identity_from_headers(
+                {
+                    "x-agent-id": str(body.get("agent_id") or "anonymous").strip() or "anonymous",
+                    "x-agent-type": str(body.get("agent_type") or "custom").strip() or "custom",
+                    "x-priority": str(body.get("priority") or "normal").strip().lower(),
+                }
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": "invalid_priority", "detail": str(exc)}, status_code=422)
+
+        registered = store.register_agent(agent, metadata=_dict_or_empty(body.get("metadata")))
+        return JSONResponse({"ok": True, "agent": registered})
+
     async def routing_request(request: Request) -> JSONResponse:
         try:
             body = await request.json()
@@ -262,7 +403,8 @@ def create_app(config_path: Optional[str] = None) -> Starlette:
             return _openai_error("missing required field: messages", "missing_messages", 400, param="messages")
 
         try:
-            intent = _intent_from_chat_body(body)
+            agent = identity_from_headers(request.headers, body)
+            intent = _intent_from_chat_body(body, agent=agent)
         except ValidationError as exc:
             import json as _json
             return _openai_error(
@@ -271,10 +413,95 @@ def create_app(config_path: Optional[str] = None) -> Starlette:
                 422,
                 extra={"detail": _json.loads(exc.json())},
             )
+        except ValueError as exc:
+            return _openai_error(
+                "invalid request priority; use low, normal, or high",
+                "invalid_priority",
+                422,
+                param="X-Priority",
+                extra={"detail": str(exc)},
+            )
 
-        decision = await intent_handler.handle(intent)
+        request_id = store.create_request(agent)
+        started = time.monotonic()
+        try:
+            admission = await queue.acquire(agent.priority)
+        except QueueFull as exc:
+            store.update_request(request_id, status="rejected", error_code="queue_full")
+            store.record_queue_event(
+                request_id=request_id,
+                agent=agent,
+                event_type="queue_full",
+                queue_depth=exc.queue_depth,
+                active_count=queue.snapshot()["active"],
+            )
+            return _openai_error(
+                "local fleet queue is full",
+                "queue_full",
+                429,
+                error_type="server_error",
+                extra={
+                    "queue": {
+                        "queue_depth": exc.queue_depth,
+                        "max_queue": exc.max_queue,
+                    }
+                },
+            )
+
+        store.update_request(request_id, status="admitted", queued_ms=admission.queued_ms)
+        store.record_queue_event(
+            request_id=request_id,
+            agent=agent,
+            event_type="admitted",
+            queue_depth=admission.queue_depth_at_admit,
+            active_count=admission.active_at_admit,
+        )
+
+        def fleet_headers(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+            current = queue.snapshot()
+            headers = {
+                "x-a0-agent-id": agent.agent_id,
+                "x-a0-agent-type": agent.agent_type,
+                "x-a0-fleet-request-id": request_id,
+                "x-a0-fleet-queue-depth": str(current["queued"]),
+                "x-a0-fleet-vram-available-gb": "unknown",
+            }
+            if extra:
+                headers.update(extra)
+            return headers
+
+        async def finish(
+            status: str,
+            *,
+            error_code: Optional[str] = None,
+            slot_id: Optional[str] = None,
+            model: Optional[str] = None,
+        ) -> None:
+            duration_ms = int((time.monotonic() - started) * 1000)
+            store.update_request(
+                request_id,
+                status=status,
+                slot_id=slot_id,
+                model=model,
+                queued_ms=admission.queued_ms,
+                duration_ms=duration_ms,
+                error_code=error_code,
+            )
+            await queue.release()
+
+        try:
+            decision = await intent_handler.handle(intent)
+        except Exception as exc:
+            await finish("failed", error_code="routing_error")
+            return _openai_error(
+                f"routing decision failed: {type(exc).__name__}: {exc}",
+                "routing_error",
+                500,
+                error_type="server_error",
+            )
         decision_body = decision.model_dump()
         if decision.no_slot_available or not decision.selected_url:
+            await finish("failed", error_code="no_slot_available")
             return _openai_error(
                 "no healthy local llama.cpp slot is available for this request",
                 "no_slot_available",
@@ -286,6 +513,16 @@ def create_app(config_path: Optional[str] = None) -> Starlette:
         url = decision.selected_url.rstrip("/") + "/chat/completions"
         wants_stream = body.get("stream") is True
         payload = _forward_payload(body, decision.selected_model, stream=wants_stream)
+        selected_context = _context_for_slot(
+            observer.get_slots(),
+            decision.selected_slot_id,
+            decision.selected_model,
+        )
+        context_extra_headers = _context_headers(
+            selected_context,
+            _estimate_prompt_tokens(body),
+            decision.selected_model,
+        )
 
         try:
             if wants_stream:
@@ -304,6 +541,8 @@ def create_app(config_path: Optional[str] = None) -> Starlette:
                 }
                 if decision.selected_model:
                     headers["x-a0-router-model"] = decision.selected_model
+                headers.update(context_extra_headers)
+                headers = fleet_headers(headers)
 
                 if resp.status >= 400:
                     try:
@@ -312,6 +551,12 @@ def create_app(config_path: Optional[str] = None) -> Starlette:
                         upstream_json = await resp.text()
                     resp.release()
                     await session.close()
+                    await finish(
+                        "failed",
+                        error_code="upstream_error",
+                        slot_id=decision.selected_slot_id,
+                        model=decision.selected_model,
+                    )
 
                     message = "upstream llama.cpp stream request failed"
                     if isinstance(upstream_json, dict):
@@ -328,8 +573,19 @@ def create_app(config_path: Optional[str] = None) -> Starlette:
                         extra={"upstream": upstream_json, "routing": decision_body},
                     )
 
+                async def managed_stream():
+                    try:
+                        async for chunk in _stream_upstream_response(resp, session):
+                            yield chunk
+                    finally:
+                        await finish(
+                            "completed",
+                            slot_id=decision.selected_slot_id,
+                            model=decision.selected_model,
+                        )
+
                 return StreamingResponse(
-                    _stream_upstream_response(resp, session),
+                    managed_stream(),
                     status_code=resp.status,
                     media_type="text/event-stream",
                     headers=headers,
@@ -346,6 +602,12 @@ def create_app(config_path: Optional[str] = None) -> Starlette:
                         upstream_json = await resp.json(content_type=None)
                     except Exception:
                         upstream_text = await resp.text()
+                        await finish(
+                            "failed",
+                            error_code="upstream_invalid_json",
+                            slot_id=decision.selected_slot_id,
+                            model=decision.selected_model,
+                        )
                         return _openai_error(
                             "upstream llama.cpp response was not valid JSON",
                             "upstream_invalid_json",
@@ -360,6 +622,8 @@ def create_app(config_path: Optional[str] = None) -> Starlette:
                     }
                     if decision.selected_model:
                         headers["x-a0-router-model"] = decision.selected_model
+                    headers.update(context_extra_headers)
+                    headers = fleet_headers(headers)
 
                     if resp.status >= 400:
                         message = "upstream llama.cpp request failed"
@@ -369,6 +633,12 @@ def create_app(config_path: Optional[str] = None) -> Starlette:
                                 message = str(upstream_error["message"])
                             elif isinstance(upstream_error, str):
                                 message = upstream_error
+                        await finish(
+                            "failed",
+                            error_code="upstream_error",
+                            slot_id=decision.selected_slot_id,
+                            model=decision.selected_model,
+                        )
                         return _openai_error(
                             message,
                             "upstream_error",
@@ -377,8 +647,19 @@ def create_app(config_path: Optional[str] = None) -> Starlette:
                             extra={"upstream": upstream_json, "routing": decision_body},
                         )
 
+                    await finish(
+                        "completed",
+                        slot_id=decision.selected_slot_id,
+                        model=decision.selected_model,
+                    )
                     return JSONResponse(upstream_json, status_code=resp.status, headers=headers)
         except aiohttp.ClientError as exc:
+            await finish(
+                "failed",
+                error_code="upstream_unreachable",
+                slot_id=decision.selected_slot_id,
+                model=decision.selected_model,
+            )
             return _openai_error(
                 f"could not reach selected llama.cpp slot: {exc}",
                 "upstream_unreachable",
@@ -387,6 +668,12 @@ def create_app(config_path: Optional[str] = None) -> Starlette:
                 extra={"routing": decision_body},
             )
         except TimeoutError:
+            await finish(
+                "failed",
+                error_code="upstream_timeout",
+                slot_id=decision.selected_slot_id,
+                model=decision.selected_model,
+            )
             return _openai_error(
                 "selected llama.cpp slot timed out",
                 "upstream_timeout",
@@ -401,6 +688,9 @@ def create_app(config_path: Optional[str] = None) -> Starlette:
         Route("/config/preview", protected(config_preview)),
         Route("/routing/preview", protected(routing_preview)),
         Route("/health/slots", protected(health_slots)),
+        Route("/fleet/status", protected(fleet_status)),
+        Route("/fleet/agents", protected(fleet_agents)),
+        Route("/fleet/agents/register", protected(fleet_agents_register), methods=["POST"]),
         Route("/routing/request", protected(routing_request), methods=["POST"]),
         Route("/v1/chat/completions", protected(chat_completions), methods=["POST"]),
     ]

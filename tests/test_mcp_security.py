@@ -97,3 +97,31 @@ def test_register_tools_includes_mutating_tools_when_enabled(monkeypatch):
     assert "start_fleet" in mcp.tools
     assert "start_slot" in mcp.tools
     assert "stop_slot" in mcp.tools
+
+
+def test_bridge_uses_fleet_manager_boundary_for_mutating_tools(monkeypatch):
+    from usr.plugins.a0_lmm_router.mcp_server import router_bridge as bridge
+
+    monkeypatch.setenv("A0_FLEET_MANAGER_BASE_URL", "http://127.0.0.1:9000")
+
+    start_result = asyncio.run(bridge.start_slot("chat"))
+    stop_result = asyncio.run(bridge.stop_slot("chat"))
+
+    assert start_result["ok"] is False
+    assert "fleet-node" in start_result["error"]
+    assert stop_result is False
+
+
+def test_bridge_fleet_manager_headers_include_agent_identity(monkeypatch):
+    from usr.plugins.a0_lmm_router.mcp_server import router_bridge as bridge
+
+    monkeypatch.setenv("A0_MCP_AGENT_ID", "mcp-main")
+    monkeypatch.setenv("A0_MCP_PRIORITY", "high")
+    monkeypatch.setenv("A0_FLEET_MANAGER_API_KEY", "secret")
+
+    headers = bridge._fleet_manager_headers()
+
+    assert headers["X-Agent-ID"] == "mcp-main"
+    assert headers["X-Agent-Type"] == "mcp"
+    assert headers["X-Priority"] == "high"
+    assert headers["Authorization"] == "Bearer secret"

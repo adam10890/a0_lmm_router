@@ -19,6 +19,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+__test__ = False
+
 
 def _read_token() -> str:
     temp = os.environ.get("TEMP", os.environ.get("TMP", tempfile.gettempdir()))

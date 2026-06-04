@@ -59,6 +59,23 @@ except ImportError:
     read_gguf_metadata = None  # type: ignore
 
 try:
+    from model_params_cache import (
+        plan_model_with_cache,
+        record_role_success,
+        render_fleet_preset_to_file,
+        store_plan_in_cache,
+        warm_fleet_params,
+    )
+    MODEL_PARAMS_CACHE_AVAILABLE = True
+except ImportError:
+    MODEL_PARAMS_CACHE_AVAILABLE = False
+    plan_model_with_cache = None  # type: ignore
+    record_role_success = None  # type: ignore
+    render_fleet_preset_to_file = None  # type: ignore
+    store_plan_in_cache = None  # type: ignore
+    warm_fleet_params = None  # type: ignore
+
+try:
     from fleet_mode import compose_target_mode, detect_fleet_mode, is_conflicting_mode
 except ImportError:
     compose_target_mode = None  # type: ignore
@@ -68,9 +85,11 @@ except ImportError:
 # Optional huggingface_hub for model downloads
 try:
     from huggingface_hub import hf_hub_download, HfApi
+    from huggingface_hub.utils import tqdm as hf_hub_tqdm
     HF_HUB_AVAILABLE = True
 except ImportError:
     HF_HUB_AVAILABLE = False
+    hf_hub_tqdm = None  # type: ignore
 
 # ---------------------------------------------------------------------------
 # Config
@@ -101,6 +120,8 @@ MUTATING_ENDPOINTS = {
     "/tokens/hf",
     "/router/write_preset_ini",
     "/router/restart",
+    "/router/warm_params",
+    "/router/record_success",
 }
 
 # Whitelist of .bat files that /run-bat is allowed to execute (basename only)
@@ -500,6 +521,20 @@ def _get_env_path(compose_path: str) -> Path:
     return compose_p.with_suffix(".env") if compose_p.suffix == ".yml" else compose_p.parent / "docker-compose.lmm.env"
 
 
+def _read_env_file_dict(env_path: Path) -> dict[str, str]:
+    """Parse docker-compose.lmm.env into a flat dict (merged with os.environ)."""
+    data = dict(os.environ)
+    if not env_path.is_file():
+        return data
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        data[key.strip()] = value.strip().strip('"').strip("'")
+    return data
+
+
 _SLOT_ENV_KEYS = {
     "chat": "CHAT_MODEL_PATH",
     "utility": "UTILITY_MODEL_PATH",
@@ -586,6 +621,51 @@ def _rewrite_env_slot_ctx(env_path: Path, slot: str, ctx_size: int) -> bool:
 # Download job worker
 # ---------------------------------------------------------------------------
 
+def _make_download_tqdm_class(job_id: str):
+    """Tqdm subclass that mirrors HF download bytes into the job registry."""
+    base = hf_hub_tqdm
+
+    class _DownloadJobTqdm(base):  # type: ignore[misc,valid-type]
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._lmm_job_id = job_id
+
+        def _sync_job_progress(self) -> None:
+            total = int(self.total or 0)
+            downloaded = int(self.n or 0)
+            pct = round((downloaded / total) * 100, 1) if total else 0
+            with _jobs_lock:
+                if self._lmm_job_id in _jobs:
+                    _jobs[self._lmm_job_id]["downloaded_bytes"] = downloaded
+                    _jobs[self._lmm_job_id]["total_bytes"] = total
+                    _jobs[self._lmm_job_id]["percent"] = pct
+
+        def update(self, n=1):
+            result = super().update(n)
+            self._sync_job_progress()
+            return result
+
+        def close(self):
+            try:
+                self._sync_job_progress()
+            finally:
+                super().close()
+
+    return _DownloadJobTqdm
+
+
+def _fetch_remote_file_size(repo_id: str, filename: str, token: str) -> int:
+    """Best-effort remote size for progress when tqdm total is missing."""
+    if not HF_HUB_AVAILABLE:
+        return 0
+    try:
+        api = HfApi(token=token if token else None)
+        info = api.repo_file_info(repo_id=repo_id, filename=filename, repo_type="model")
+        return int(getattr(info, "size", 0) or 0)
+    except Exception:
+        return 0
+
+
 def _download_worker(job_id: str, repo_id: str, filename: str, models_dir: str, token: str) -> None:
     """Background thread to download a model from HuggingFace."""
     try:
@@ -602,21 +682,15 @@ def _download_worker(job_id: str, repo_id: str, filename: str, models_dir: str, 
         local_dir.mkdir(parents=True, exist_ok=True)
         local_path = local_dir / filename
 
-        # Progress callback
-        def on_progress(data: dict) -> None:
-            downloaded = data.get("downloaded_bytes", 0)
-            total = data.get("total_bytes", 0)
-            pct = round((downloaded / total) * 100, 1) if total else 0
-            with _jobs_lock:
-                if job_id in _jobs:
-                    _jobs[job_id]["downloaded_bytes"] = downloaded
-                    _jobs[job_id]["total_bytes"] = total
-                    _jobs[job_id]["percent"] = pct
+        remote_size = _fetch_remote_file_size(repo_id, filename, token)
 
-        # Download
         with _jobs_lock:
             _jobs[job_id]["status"] = "downloading"
             _jobs[job_id]["local_path"] = str(local_path)
+            if remote_size > 0:
+                _jobs[job_id]["total_bytes"] = remote_size
+
+        tqdm_class = _make_download_tqdm_class(job_id) if hf_hub_tqdm is not None else None
 
         downloaded_path = hf_hub_download(
             repo_id=repo_id,
@@ -625,6 +699,7 @@ def _download_worker(job_id: str, repo_id: str, filename: str, models_dir: str, 
             token=token if token else None,
             resume_download=True,
             local_files_only=False,
+            tqdm_class=tqdm_class,
         )
 
         # Update manifest
@@ -1204,6 +1279,8 @@ class Handler(BaseHTTPRequestHandler):
                 "capabilities": [
                     "router/write_preset_ini",
                     "router/restart",
+                    "router/warm_params",
+                    "router/record_success",
                 ],
             })
             return
@@ -1250,6 +1327,8 @@ class Handler(BaseHTTPRequestHandler):
                 "capabilities": [
                     "router/write_preset_ini",
                     "router/restart",
+                    "router/warm_params",
+                    "router/record_success",
                 ],
             })
             return
@@ -1322,6 +1401,61 @@ class Handler(BaseHTTPRequestHandler):
             result["action"] = "restart_router"
             self._send_json(200 if result.get("ok") else 500, result)
 
+        elif parsed.path == "/router/warm_params":
+            if not MODEL_PARAMS_CACHE_AVAILABLE:
+                self._send_json(503, {"ok": False, "error": "model_params_cache module unavailable"})
+                return
+            try:
+                env_path = _get_env_path(self.server.compose_path)
+                env = _read_env_file_dict(env_path)
+                force_refresh = bool(body.get("force_refresh", False))
+                restart = bool(body.get("restart", True))
+                preset_path = _default_preset_host_path(project_dir)
+                warm = render_fleet_preset_to_file(env, preset_path, force_refresh=force_refresh)
+                restarted = False
+                if restart and "router" in str(self.server.compose_path).lower():
+                    rr = _restart_router_container()
+                    restarted = bool(rr.get("ok"))
+                self._send_json(200, {
+                    "ok": True,
+                    "action": "warm_params",
+                    "preset_path": str(preset_path),
+                    "stats": warm.get("stats"),
+                    "cache_path": warm.get("cache_path"),
+                    "restarted": restarted,
+                    "plans": [p.as_dict() for p in warm.get("entries") or []],
+                })
+            except Exception as exc:
+                self._send_json(500, {"ok": False, "error": str(exc)})
+
+        elif parsed.path == "/router/record_success":
+            if not MODEL_PARAMS_CACHE_AVAILABLE:
+                self._send_json(503, {"ok": False, "error": "model_params_cache module unavailable"})
+                return
+            try:
+                env_path = _get_env_path(self.server.compose_path)
+                env = _read_env_file_dict(env_path)
+                if body.get("all"):
+                    for role, _alias, model_var in (
+                        ("chat", "chat", "CHAT_MODEL_PATH"),
+                        ("utility", "utility", "UTILITY_MODEL_PATH"),
+                        ("embed", "embedding", "EMBED_MODEL_PATH"),
+                    ):
+                        path = (env.get(model_var) or "").strip()
+                        if path:
+                            record_role_success(role, container_model_path=path, env=env)
+                    self._send_json(200, {"ok": True, "action": "record_success", "scope": "all"})
+                    return
+                role = (body.get("role") or "").strip().lower()
+                model_path = (body.get("model_path") or "").strip()
+                if not role or not model_path:
+                    self._send_json(400, {"ok": False, "error": "role and model_path required (or all=true)"})
+                    return
+                record_role_success(role, container_model_path=model_path, env=env)
+                self._send_json(200, {"ok": True, "action": "record_success", "role": role})
+            except Exception as exc:
+                self._send_json(500, {"ok": False, "error": str(exc)})
+
         elif parsed.path == "/run-bat":
             bat_name = body.get("bat", "")
             bat_args = body.get("args", [])
@@ -1373,73 +1507,120 @@ class Handler(BaseHTTPRequestHandler):
             model_path = str(model.get("path", "")).replace("\\", "/")
             full_model_path = f"/models/{model_path}/{model_file}" if model_path else f"/models/{model_file}"
 
-            # Calculate optimal context size if context calculator is available
-            ctx_calc_result = None
-            if calculate_optimal_context:
+            env_map = _read_env_file_dict(env_path)
+            role_key = slot.lower()
+            if role_key == "embedding":
+                role_key = "embed"
+            alias_map = {"chat": "chat", "utility": "utility", "embed": "embedding", "embedding": "embedding"}
+            alias = alias_map.get(role_key, role_key)
+
+            recommended_ctx = None
+            params_source = None
+            host_model_path = str(Path(models_dir) / model_path / model_file) if model_path else str(Path(models_dir) / model_file)
+
+            if MODEL_PARAMS_CACHE_AVAILABLE and plan_model_with_cache:
                 try:
-                    # Get GPU VRAM from hardware scan
                     gpus = _detect_gpus_for_scan()
                     total_vram_gb = sum(g.get("total_vram_mb", 0) / 1024 for g in gpus) if gpus else 0.0
+                    if total_vram_gb > 0:
+                        env_map["A0_LMM_AVAILABLE_VRAM_GB"] = str(round(total_vram_gb, 2))
+                    plan, _g_opts, _p_opts, params_source = plan_model_with_cache(
+                        alias=alias,
+                        role=role_key if role_key != "embedding" else "embed",
+                        container_model_path=full_model_path,
+                        env=env_map,
+                        force_refresh=bool(body.get("force_refresh_params", False)),
+                    )
+                    recommended_ctx = plan.hard_ctx
+                    if store_plan_in_cache:
+                        store_plan_in_cache(
+                            alias=alias,
+                            role=plan.role,
+                            container_model_path=full_model_path,
+                            host_model_path=host_model_path,
+                            plan=plan,
+                            global_options=_g_opts,
+                            per_model_options=_p_opts,
+                            source=params_source or "computed",
+                            env=env_map,
+                            available_vram_gb=total_vram_gb or None,
+                        )
+                except Exception as e:
+                    print(f"[WARNING] model_params_cache planning failed: {e}")
 
-                    # Calculate VRAM used by other running slots (rough estimate)
+            if recommended_ctx is None and calculate_optimal_context:
+                try:
+                    gpus = _detect_gpus_for_scan()
+                    total_vram_gb = sum(g.get("total_vram_mb", 0) / 1024 for g in gpus) if gpus else 0.0
                     other_slots_vram_gb = 0.0
                     for other_slot in ["chat", "utility", "embedding", "vision", "reasoning"]:
                         if other_slot != slot.lower():
                             other_model_id = _get_current_model_path(env_path, other_slot)
                             if other_model_id:
-                                # Rough estimate: file size * 1.15
-                                other_model = manifest.get("models", {}).get(other_model_id.split("/")[-1].replace(".gguf", ""))
+                                other_model = manifest.get("models", {}).get(
+                                    other_model_id.split("/")[-1].replace(".gguf", "")
+                                )
                                 if other_model:
                                     other_slots_vram_gb += other_model.get("size_gb", 0) * 1.15
-
-                    # Get full model file path on host for context calculator
-                    host_model_path = str(Path(models_dir) / model_path / model_file) if model_path else str(Path(models_dir) / model_file)
-
                     ctx_calc_result = calculate_optimal_context(
                         host_model_path,
                         slot.lower(),
                         total_vram_gb,
                         other_slots_vram_gb,
                     )
+                    recommended_ctx = ctx_calc_result.get("recommended_ctx")
+                    params_source = "legacy_calculator"
                 except Exception as e:
-                    # Log error but continue with default context
                     print(f"[WARNING] Context calculation failed: {e}")
 
-            # Rewrite env with model path
             ok = _rewrite_env_slot_model(env_path, slot, full_model_path)
             if not ok:
                 self._send_json(400, {"ok": False, "error": f"invalid slot '{slot}'"})
                 return
 
-            # Rewrite env with calculated context size
-            if ctx_calc_result and ctx_calc_result.get("recommended_ctx"):
-                _rewrite_env_slot_ctx(env_path, slot, ctx_calc_result["recommended_ctx"])
+            if recommended_ctx:
+                _rewrite_env_slot_ctx(env_path, slot, int(recommended_ctx))
 
             restarted = False
+            preset_refreshed = False
             if apply_now:
-                # Restart only this slot's container
-                service_map = {
-                    "chat": "a0-llama-chat",
-                    "utility": "a0-llama-utility",
-                    "embedding": "a0-llama-embed",
-                    "embed": "a0-llama-embed",
-                    "vision": "a0-llama-vision",
-                    "reasoning": "a0-llama-reasoning",
-                }
-                service = service_map.get(slot.lower())
-                if service:
-                    result = _run_docker_compose(self.server.compose_path, "up", "-d", "--force-recreate", service)
-                    restarted = result.get("ok", False)
+                compose_name = str(self.server.compose_path).lower()
+                if "router" in compose_name and MODEL_PARAMS_CACHE_AVAILABLE and render_fleet_preset_to_file:
+                    try:
+                        env_map = _read_env_file_dict(env_path)
+                        preset_path = _default_preset_host_path(project_dir)
+                        render_fleet_preset_to_file(env_map, preset_path, force_refresh=False)
+                        preset_refreshed = True
+                        rr = _restart_router_container()
+                        restarted = bool(rr.get("ok"))
+                    except Exception as e:
+                        print(f"[WARNING] router preset refresh after assign failed: {e}")
+                else:
+                    service_map = {
+                        "chat": "a0-llama-chat",
+                        "utility": "a0-llama-utility",
+                        "embedding": "a0-llama-embed",
+                        "embed": "a0-llama-embed",
+                        "vision": "a0-llama-vision",
+                        "reasoning": "a0-llama-reasoning",
+                    }
+                    service = service_map.get(slot.lower())
+                    if service:
+                        result = _run_docker_compose(
+                            self.server.compose_path, "up", "-d", "--force-recreate", service
+                        )
+                        restarted = result.get("ok", False)
 
             response_data = {
                 "ok": True,
                 "slot": slot,
                 "model_id": model_id,
                 "restarted": restarted,
+                "preset_refreshed": preset_refreshed,
                 "model_path": full_model_path,
+                "recommended_ctx": recommended_ctx,
+                "params_source": params_source,
             }
-            if ctx_calc_result:
-                response_data["context_calculation"] = ctx_calc_result
 
             self._send_json(200, response_data)
 

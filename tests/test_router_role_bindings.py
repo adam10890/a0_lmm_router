@@ -73,3 +73,19 @@ def test_atomic_preset_write_creates_backup(tmp_path):
 
     assert preset.read_text(encoding="utf-8") == "[chat]\nmodel = /models/new.gguf\n"
     assert preset.with_suffix(".ini.bak").read_text(encoding="utf-8") == "[chat]\nmodel = /models/old.gguf\n"
+
+
+def test_router_url_rejects_low_ports():
+    from usr.plugins.a0_lmm_router.api.router_aliases import _router_url
+
+    try:
+        _router_url({"port": 80})
+        assert False, "low router port should be rejected"
+    except ValueError as exc:
+        assert "outside allowed range" in str(exc)
+
+
+def test_router_url_accepts_router_range():
+    from usr.plugins.a0_lmm_router.api.router_aliases import _router_url
+
+    assert _router_url({"port": 8080}) == "http://host.docker.internal:8080/v1/models"

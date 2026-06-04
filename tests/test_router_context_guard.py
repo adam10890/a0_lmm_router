@@ -14,6 +14,7 @@ from router_context import (  # noqa: E402
     RESPONSE_TOKEN_RESERVE,
     _chat_signature,
     _normalize_api_base,
+    context_budget_details,
     history_token_budget,
     is_local_fleet_chat_active,
     resolve_router_ctx_limit,
@@ -28,8 +29,22 @@ def test_history_budget_reserves_system_completion_and_extras():
         "ctx_length": 65536,
     }
     budget = history_token_budget(cfg, system_tokens=12000, extras_tokens=3000)
-    # int(65536 * 0.9) - 12000 - 3000 - 8192 = 35790
-    assert budget == 35790
+    # int(65536 * 0.70) - 12000 - 3000 - 8192 = 22683
+    assert budget == 22683
+
+
+def test_context_budget_details_reports_effective_window():
+    cfg = {
+        "provider": "lmm_router",
+        "name": "chat",
+        "api_base": "http://127.0.0.1:9/v1",
+        "ctx_length": 65536,
+    }
+    details = context_budget_details(cfg, 1000, extras_tokens=500, history_tokens=20000)
+    assert details["hard_ctx"] == 65536
+    assert details["effective_ratio"] == 0.70
+    assert details["effective_ctx"] == 45875
+    assert details["projected_occupancy"] > details["occupancy"]
 
 
 def test_history_budget_minimum_floor():

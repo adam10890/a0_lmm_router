@@ -17,6 +17,7 @@ Design principles:
 """
 from __future__ import annotations
 
+import os
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -42,6 +43,7 @@ _KNOWN_PRIVACY_MODES = frozenset({
 })
 
 _KNOWN_PREFERENCES = frozenset({"fast", "normal", "quality"})
+DRY_RUN_MODE = os.environ.get("A0_ROUTING_DRY_RUN", "1") != "0"
 
 # Role inferred from task_type when role is not explicitly provided.
 _TASK_TO_ROLE: Dict[str, str] = {
@@ -61,6 +63,15 @@ _TASK_TO_ROLE: Dict[str, str] = {
 
 def _role_from_task_type(task_type: str) -> str:
     return _TASK_TO_ROLE.get(task_type.lower(), "chat")
+
+
+def _router_alias_from_role(role: str) -> str:
+    role_key = (role or "chat").lower()
+    if role_key in {"embed", "embedding"}:
+        return "embedding"
+    if role_key == "utility":
+        return "utility"
+    return "chat"
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +121,10 @@ class RoutingDecisionResponse(BaseModel):
     """Dry-run routing decision.  Never contains secrets or model weights."""
 
     decision_id: str
-    dry_run:     bool = True   # always True in Phase 5
+    dry_run: bool = Field(
+        default=True,
+        description="True for dry-run routing decisions; set false only when this handler owns live forwarding.",
+    )
 
     # Echo of key request fields
     agent_id:     str
@@ -214,6 +228,7 @@ class RoutingIntentHandler:
         except Exception as exc:
             return RoutingDecisionResponse(
                 decision_id=decision_id,
+                dry_run=DRY_RUN_MODE,
                 agent_id=req.agent_id,
                 agent_type=req.agent_type,
                 role=role,
@@ -239,6 +254,7 @@ class RoutingIntentHandler:
             reason_codes.append("no_healthy_slot_in_chain")
             return RoutingDecisionResponse(
                 decision_id=decision_id,
+                dry_run=DRY_RUN_MODE,
                 agent_id=req.agent_id,
                 agent_type=req.agent_type,
                 role=role,
@@ -264,9 +280,10 @@ class RoutingIntentHandler:
         # ── 7. Enrich from slot config ─────────────────────────────────────
         slot_cfg: Dict[str, Any] = mgr._slot_configs.get(slot_id, {})
         backend_type: str = mgr.backend_type
-        model_id: Optional[str] = (
-            slot_cfg.get("model_id") or slot_cfg.get("router_default_model")
-        )
+        if slot_cfg.get("router_mode"):
+            model_id = slot_cfg.get("router_default_model") or _router_alias_from_role(role)
+        else:
+            model_id = slot_cfg.get("model_id") or slot_cfg.get("router_default_model")
 
         # ── 8. Health snapshot ─────────────────────────────────────────────
         try:
@@ -280,6 +297,7 @@ class RoutingIntentHandler:
 
         return RoutingDecisionResponse(
             decision_id=decision_id,
+            dry_run=DRY_RUN_MODE,
             agent_id=req.agent_id,
             agent_type=req.agent_type,
             role=role,

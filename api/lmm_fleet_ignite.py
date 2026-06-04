@@ -27,7 +27,10 @@ from pathlib import Path
 from flask import Request
 
 from helpers.api import ApiHandler
-from helpers import files
+try:
+    from usr.plugins.a0_lmm_router.helpers.conf_resolver import resolve_conf_path
+except ImportError:
+    from helpers.conf_resolver import resolve_conf_path
 
 try:
     from usr.plugins.a0_lmm_router.helpers.fleet_mode import detect_fleet_mode, compose_target_mode, is_conflicting_mode
@@ -40,13 +43,12 @@ LAUNCHER_PATH = f"{PLUGIN_DIR}/launcher.py"
 HOST_BAT_HINT = "start_agent_zero.bat (on the Windows host)"
 
 
-def _resolve_conf_path() -> str:
-    plugin_conf = files.get_abs_path("usr/plugins/a0_lmm_router/conf/llama_cpp_servers.yaml")
-    root_conf = files.get_abs_path("conf/llama_cpp_servers.yaml")
-    return plugin_conf if os.path.exists(plugin_conf) else root_conf
-
-
-def _probe(host: str, port: int, timeout: float = 1.5) -> dict:
+def _probe(host: str, port: int, timeout: float | None = None) -> dict:
+    if timeout is None:
+        try:
+            timeout = float(os.environ.get("FLEET_PROBE_TIMEOUT", "3.0"))
+        except ValueError:
+            timeout = 3.0
     try:
         with socket.create_connection((host, port), timeout=timeout):
             pass
@@ -94,7 +96,7 @@ class LmmFleetIgnite(ApiHandler):
         import yaml
 
         try:
-            conf_path = _resolve_conf_path()
+            conf_path = resolve_conf_path(__file__)
             if not os.path.exists(conf_path):
                 return {
                     "ok": False,

@@ -15,3 +15,183 @@ host_helper:
 fleet:
   preferred_mode: router
   block_conflicting_mode: true
+
+tool_exposure:
+  enabled: true
+  mode: local_fleet
+  default_profile: agent0
+  manifest_path: data/tool_exposure_manifest.json
+  profile_aliases:
+    default: agent0
+    main: agent0
+    chat: agent0
+    developer: coding
+    dev: coding
+    coder: coding
+    hacker: coding
+    researcher: research
+    wiki_librarian: wiki
+    librarian: wiki
+    document: documents
+    meta_supervisor: meta
+    parallel: swarm
+  profile_allowlists:
+    agent0:
+      - response
+      - call_subordinate
+      - delegate_profile
+      - pen_paper
+      - skills
+      - skills_tool
+      - memory
+      - memory_*
+      - notify_user
+      - wait
+    coding:
+      - response
+      - call_subordinate
+      - delegate_profile
+      - text_editor
+      - text_editor_remote
+      - code_exe
+      - code_execution_tool
+      - code_execution_remote
+      - input
+      - document_query
+      - search_engine
+      - skills
+      - skills_tool
+      - memory
+      - memory_*
+    research:
+      - response
+      - call_subordinate
+      - delegate_profile
+      - search_engine
+      - browser
+      - document_query
+      - autoresearch
+      - wiki_list
+      - wiki_query
+      - skills
+      - skills_tool
+      - memory
+      - memory_*
+    wiki:
+      - response
+      - wiki_*
+      - skills
+      - skills_tool
+      - memory
+      - memory_*
+    google:
+      - response
+      - delegate_profile
+      - calendar_*
+      - contacts_*
+      - drive_*
+      - gmail_*
+      - sheets_*
+      - tasks_*
+      - skills
+      - skills_tool
+      - memory
+      - memory_*
+    documents:
+      - response
+      - delegate_profile
+      - document_query
+      - office_artifact
+      - text_editor
+      - skills
+      - skills_tool
+      - memory
+      - memory_*
+    meta:
+      - response
+      - meta_*
+      - delegate_profile
+      - skills
+      - skills_tool
+      - memory
+      - memory_*
+    swarm:
+      - response
+      - delegate_profile
+      - delegate_parallel
+      - swarm_message
+      - pen_paper
+      - skills
+      - skills_tool
+      - memory
+      - memory_*
+
+mcp_exposure:
+  enabled: true
+  mode: local_fleet
+  default_profile: agent0
+  manifest_path: data/mcp_exposure_manifest.json
+  profile_aliases:
+    default: agent0
+    main: agent0
+    chat: agent0
+    developer: coding
+    dev: coding
+    coder: coding
+    hacker: coding
+    researcher: research
+    wiki_librarian: wiki
+    librarian: wiki
+    document: documents
+    meta_supervisor: meta
+    parallel: swarm
+  profile_allowlists:
+    agent0:
+      - lmm_router.fleet_status
+      - lmm_router.list_slots
+    coding:
+      - context7.*
+      - fetch.*
+      - git.*
+      - github.*
+      - lmm_router.*
+      - memory.*
+      - sequential_thinking.*
+    research:
+      - context7.*
+      - fetch.*
+      - github.search_*
+      - github.get_*
+      - perplexity_ask.*
+      - memory.*
+      - sequential_thinking.*
+    browser:
+      - context7.*
+      - fetch.*
+      - perplexity_ask.*
+    wiki:
+      - memory.*
+      - lmm_router.fleet_status
+      - lmm_router.list_slots
+    google: []
+    documents:
+      - fetch.*
+    meta:
+      - lmm_router.fleet_status
+      - lmm_router.list_slots
+      - memory.*
+      - sequential_thinking.*
+    swarm:
+      - lmm_router.fleet_status
+      - lmm_router.list_slots
+      - memory.*
+      - sequential_thinking.*
+
+output_budget:
+  enabled: true
+  chat:
+    default_max_tokens: 2048
+    hard_max_tokens: 4096
+  utility:
+    default_max_tokens: 768
+    hard_max_tokens: 1024

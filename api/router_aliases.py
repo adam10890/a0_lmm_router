@@ -6,7 +6,7 @@ import os
 import sys
 import urllib.request
 import configparser
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 
 import yaml
 
@@ -24,6 +24,7 @@ except ImportError:
 try:
     from usr.plugins.a0_lmm_router.helpers.llama_cpp_manager import BackendManager
     from usr.plugins.a0_lmm_router.helpers import fleet_models
+    from usr.plugins.a0_lmm_router.helpers.conf_resolver import resolve_conf_path
     from usr.plugins.a0_lmm_router.helpers.router_probe import detect_fleet_http
 except ImportError:
     _here = os.path.dirname(os.path.abspath(__file__))
@@ -32,25 +33,17 @@ except ImportError:
         sys.path.insert(0, _plugin_root)
     from helpers.llama_cpp_manager import BackendManager
     from helpers import fleet_models
+    from helpers.conf_resolver import resolve_conf_path
     from helpers.router_probe import detect_fleet_http
 
 ROLES = ("chat", "utility", "embedding")
-
-
-def _resolve_conf_path() -> str:
-    """Locate llama_cpp_servers.yaml (env override → root → plugin fallback)."""
-    env_conf = os.environ.get("A0_LMM_ROUTER_CONFIG", "").strip()
-    if env_conf and os.path.exists(env_conf):
-        return env_conf
-    here = Path(__file__).resolve()
-    plugin_conf = str(here.parents[1] / "conf" / "llama_cpp_servers.yaml")
-    root_conf = str(here.parents[4] / "conf" / "llama_cpp_servers.yaml")
-    return root_conf if os.path.exists(root_conf) else plugin_conf
+_ALLOWED_ROUTER_PORT_MIN = 8000
+_ALLOWED_ROUTER_PORT_MAX = 9099
 
 
 def _load_config() -> dict:
     try:
-        with open(_resolve_conf_path(), "r", encoding="utf-8") as f:
+        with open(resolve_conf_path(__file__), "r", encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except Exception:
         return {}
@@ -79,16 +72,20 @@ def _synthesize_router_slot_cfg() -> dict | None:
 
 
 def _parse_preset_file(preset_path: str) -> list[dict]:
+    if preset_path == "/etc/llama/preset.ini":
+        preset_path = os.path.join(_PLUGIN_ROOT, "conf", "models_preset.ini")
     if not preset_path or not os.path.exists(preset_path):
         return []
     cp = configparser.ConfigParser()
     cp.read(preset_path, encoding="utf-8")
     rows = []
     for section in cp.sections():
+        if section == "*":
+            continue
         rows.append({
             "alias": cp.get(section, "alias", fallback=section),
             "model_path": cp.get(section, "model", fallback=""),
-            "ctx_size": cp.get(section, "ctx_size", fallback=cp.get(section, "ctx-size", fallback="")),
+            "ctx_size": cp.get(section, "ctx-size", fallback=cp.get(section, "ctx_size", fallback="")),
         })
     return rows
 
@@ -162,7 +159,15 @@ def parse_router_models_payload(payload: dict) -> dict[str, dict]:
 
 
 def _router_url(slot_cfg: dict) -> str:
-    port = int(slot_cfg.get("port") or 8080)
+    try:
+        port = int(slot_cfg.get("port") or 8080)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("router port must be an integer") from exc
+    if port < _ALLOWED_ROUTER_PORT_MIN or port > _ALLOWED_ROUTER_PORT_MAX:
+        raise ValueError(
+            f"router port {port} outside allowed range "
+            f"{_ALLOWED_ROUTER_PORT_MIN}-{_ALLOWED_ROUTER_PORT_MAX}"
+        )
     return f"http://host.docker.internal:{port}/v1/models"
 
 
@@ -195,7 +200,7 @@ class RouterAliases(ApiHandler):
         # 1) Prefer the configured slot (BackendManager view of the YAML).
         slot_cfg = None
         try:
-            mgr = BackendManager.get_instance()
+            mgr = BackendManager(resolve_conf_path(__file__))
             slot_cfg = mgr._slot_configs.get(slot_id)
         except Exception:
             slot_cfg = None

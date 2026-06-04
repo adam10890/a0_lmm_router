@@ -126,6 +126,19 @@ asyncio.run(main())
 - Restart: `docker exec agent-zero-2 pkill -f "launcher.py mcp"` then re-run the launcher command
 - `stop_agent_zero.bat` shuts down the MCP server before stopping the container
 
+#### Local Fleet MCP prompt exposure
+
+When the active chat preset is **Local Fleet (llama.cpp RTX 4090)**, the
+plugin filters the rendered Agent Zero MCP prompt by profile before it reaches
+the model. The main `agent0` profile keeps only lightweight router status tools
+by default (`lmm_router.fleet_status`, `lmm_router.list_slots`); specialist
+profiles such as `developer` and `researcher` can still expose heavier MCP
+servers like `git`, `github`, `context7`, `fetch`, and `perplexity_ask`.
+
+Configuration lives under `mcp_exposure` in `default_config.yaml`. Runtime
+telemetry is saved on the agent as `a0_lmm_router_mcp_exposure`, and the latest
+manifest is written to `data/mcp_exposure_manifest.json`.
+
 ### Standalone OpenAI-Compatible Provider
 
 The router service can also run outside the Agent Zero WebUI as a local
@@ -1256,12 +1269,32 @@ Agent Zero compresses **history only** against `ctx_length × ctx_history` *befo
 
 **Fix (v1.3+):** extension `message_loop_prompts_after/_20_router_context_guard.py` runs **only** when the active chat model is the **Local Fleet (llama.cpp RTX 4090)** preset (global Settings or per-chat model switcher). All other presets use Agent Zero’s built-in history compression only.
 
-1. Reads live `n_ctx` from router `GET /v1/models` (fallback: `ROUTER_CTX_SIZE`, slot config, preset `ctx_length`).
-2. After the system prompt is assembled, computes a history budget:  
-   `n_ctx × 0.9 − system_tokens − extras_estimate − 8192` (completion reserve).
+1. Reads live `n_ctx` from router `GET /v1/models` (fallback: slot config or preset `ctx_length`).
+2. After the system prompt is assembled, computes a history budget:
+   `hard_ctx * A0_LMM_EFFECTIVE_CTX_RATIO - system_tokens - extras_estimate - response_reserve`.
+   The default effective ratio is `0.70`, because long-context quality tends
+   to degrade before the nominal window is completely full.
 3. Temporarily overrides `History._get_ctx_size_for_history()` to that budget and runs A0’s built-in `history.compress()` until the prompt fits.
 
 You should see **“LMM Router context guard”** in the agent log when compression runs. If history still exceeds the budget after compression, start a new chat or reduce memories / system prompt size.
+
+The same log line includes tool/MCP exposure telemetry when available. If the
+Agent Zero UI still shows a smaller `ctx_length` (for example 32K) while Router
+Mode reports 64K via `/v1/models`, treat the router value and the
+`a0_lmm_router_context_guard` telemetry as the source of truth for Local Fleet.
+
+### Runaway local output / repeated chunks
+
+Local models can occasionally continue generating far beyond the useful tool
+call or final response. The `chat_model_call_before` and `util_model_call_before`
+hooks wrap Local Fleet model calls and enforce `output_budget`:
+
+- chat default `max_tokens`: `2048`, hard cap `4096`
+- utility default `max_tokens`: `768`, hard cap `1024`
+
+Existing smaller per-call limits are preserved. Excessive `max_tokens` or
+`max_completion_tokens` values are lowered to the role hard cap. Disable with
+`output_budget.enabled: false` or `A0_LMM_OUTPUT_BUDGET_ENABLED=0`.
 
 ### Plugin does not appear in the Settings sidebar
 

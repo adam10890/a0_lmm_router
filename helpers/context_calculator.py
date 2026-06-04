@@ -171,7 +171,7 @@ def read_gguf_metadata(model_path: str) -> dict:
             for _ in range(kv_count):
                 key_len = struct.unpack("<Q", f.read(8))[0]
                 key = f.read(key_len).decode("utf-8", errors="ignore")
-                value_type = struct.unpack("<B", f.read(1))[0]
+                value_type = struct.unpack("<I", f.read(4))[0]
 
                 # Read value based on type
                 if value_type == 0:  # UINT8
@@ -194,7 +194,7 @@ def read_gguf_metadata(model_path: str) -> dict:
                     str_len = struct.unpack("<Q", f.read(8))[0]
                     value = f.read(str_len).decode("utf-8", errors="ignore")
                 elif value_type == 9:  # ARRAY
-                    arr_type = struct.unpack("<B", f.read(1))[0]
+                    arr_type = struct.unpack("<I", f.read(4))[0]
                     arr_len = struct.unpack("<Q", f.read(8))[0]
                     if arr_type == 4:  # UINT32 array
                         value = [struct.unpack("<I", f.read(4))[0] for _ in range(arr_len)]
@@ -205,25 +205,38 @@ def read_gguf_metadata(model_path: str) -> dict:
                     else:
                         # Skip unknown array types
                         for _ in range(arr_len):
-                            if arr_type == 4:
+                            if arr_type in (0, 1, 7):
+                                f.read(1)
+                            elif arr_type in (2, 3):
+                                f.read(2)
+                            elif arr_type in (4, 5, 6):
                                 f.read(4)
-                            elif arr_type == 5:
-                                f.read(4)
-                            elif arr_type == 6:
-                                f.read(4)
+                            elif arr_type in (10, 11, 12):
+                                f.read(8)
+                            elif arr_type == 8:
+                                str_len = struct.unpack("<Q", f.read(8))[0]
+                                f.read(str_len)
+                            else:
+                                break
                         value = None
+                elif value_type == 10:  # UINT64
+                    value = struct.unpack("<Q", f.read(8))[0]
+                elif value_type == 11:  # INT64
+                    value = struct.unpack("<q", f.read(8))[0]
+                elif value_type == 12:  # FLOAT64
+                    value = struct.unpack("<d", f.read(8))[0]
                 else:
-                    # Skip unknown types
-                    continue
+                    # Unknown scalar size; stop rather than desynchronizing the stream.
+                    break
 
                 # Extract relevant metadata
-                if key == "n_ctx_train":
+                if key == "n_ctx_train" or key.endswith(".context_length"):
                     metadata["n_ctx_train"] = int(value) if isinstance(value, (int, str)) else None
-                elif key == "n_embd":
+                elif key == "n_embd" or key.endswith(".embedding_length"):
                     metadata["n_embd"] = int(value) if isinstance(value, (int, str)) else None
-                elif key == "n_layer":
+                elif key == "n_layer" or key.endswith(".block_count"):
                     metadata["n_layer"] = int(value) if isinstance(value, (int, str)) else None
-                elif key == "n_head":
+                elif key == "n_head" or key.endswith(".attention.head_count"):
                     metadata["n_head"] = int(value) if isinstance(value, (int, str)) else None
 
         return metadata

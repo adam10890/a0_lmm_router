@@ -28,18 +28,24 @@ except ImportError:
 
 def _parse_preset(preset_path: str, models_dir: str) -> list[dict]:
     """Return a list of model dicts parsed from a .ini preset file."""
+    if preset_path == "/etc/llama/preset.ini":
+        preset_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "conf", "models_preset.ini")
     if not preset_path or not os.path.exists(preset_path):
         return []
     cp = configparser.ConfigParser()
     cp.read(preset_path, encoding="utf-8")
     models = []
     for section in cp.sections():
+        if section == "*":
+            continue
         alias = cp.get(section, "alias", fallback=section)
         rel   = cp.get(section, "model", fallback="")
-        ctx   = cp.get(section, "ctx_size", fallback="")
+        ctx   = cp.get(section, "ctx-size", fallback=cp.get(section, "ctx_size", fallback=""))
         is_embed = cp.getboolean(section, "embedding", fallback=False)
-        ngl   = cp.get(section, "n_gpu_layers", fallback="")
-        ck    = cp.get(section, "cache_type_k", fallback="")
+        ngl   = cp.get(section, "n-gpu-layers", fallback=cp.get(section, "n_gpu_layers", fallback=""))
+        ck    = cp.get(section, "cache-type-k", fallback=cp.get(section, "cache_type_k", fallback=""))
+        cv    = cp.get(section, "cache-type-v", fallback=cp.get(section, "cache_type_v", fallback=""))
+        fa    = cp.get(section, "flash-attn", fallback=cp.get(section, "flash_attn", fallback=""))
         full_path = os.path.join(models_dir, rel) if (models_dir and rel) else rel
         models.append({
             "alias":      alias,
@@ -48,6 +54,8 @@ def _parse_preset(preset_path: str, models_dir: str) -> list[dict]:
             "ctx_size":   ctx,
             "gpu_layers": ngl,
             "cache_type_k": ck,
+            "cache_type_v": cv,
+            "flash_attn": fa,
             "is_embedding": is_embed,
         })
     return models

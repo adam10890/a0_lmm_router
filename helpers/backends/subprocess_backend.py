@@ -241,13 +241,13 @@ class SubprocessBackend(InferenceBackend):
             rdir = config.get("router_models_dir", "")
             if use_wsl and rdir:
                 rdir = self._convert_wsl_path(rdir)
-            if rdir:
-                cmd.extend(["--models-dir", rdir])
-            if config.get("router_models_autoload", True):
-                cmd.append("--models-autoload")
             preset = config.get("router_models_preset", "")
             if use_wsl and preset:
                 preset = self._convert_wsl_path(preset)
+            if rdir and not preset:
+                cmd.extend(["--models-dir", rdir])
+            if config.get("router_models_autoload", True):
+                cmd.append("--models-autoload")
             if preset:
                 cmd.extend(["--models-preset", preset])
             rmax = int(config.get("router_models_max", 1))

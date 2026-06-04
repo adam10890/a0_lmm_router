@@ -13,6 +13,7 @@ setlocal
 set HERE=%~dp0
 set COMPOSE_FILE=%HERE%docker-compose.lmm.router.yml
 set ENV_FILE=%HERE%docker-compose.lmm.env
+set PRESET_SCRIPT=%HERE%..\scripts\render_router_preset.py
 
 echo.
 echo === Agent Zero LMM Fleet — Router Mode ===
@@ -35,6 +36,13 @@ for %%C in (a0-llama-chat a0-llama-utility a0-llama-embed) do (
         echo           docker compose -f "%HERE%docker-compose.lmm.yml" --env-file "%ENV_FILE%" down
         exit /b 1
     )
+)
+
+echo Rendering max-feasible Router Mode preset...
+python "%PRESET_SCRIPT%" --env-file "%ENV_FILE%" --output "%HERE%..\conf\models_preset.ini"
+if %ERRORLEVEL% NEQ 0 (
+    echo [ERROR] Failed to render models_preset.ini.
+    exit /b 1
 )
 
 echo Starting Router Mode container...

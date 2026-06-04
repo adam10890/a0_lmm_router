@@ -28,18 +28,33 @@ class JobStatus(ApiHandler):
 
             result = fleet_models.job_status(job_id)
             if result.get("ok"):
+                status = result.get("status", "unknown")
+                percent = float(result.get("percent", 0) or 0)
+                downloaded_bytes = int(result.get("downloaded_bytes", 0) or 0)
+                total_bytes = int(result.get("total_bytes", 0) or 0)
+                job = {
+                    "id": result.get("job_id", job_id),
+                    "status": status,
+                    "progress": percent,
+                    "downloaded_bytes": downloaded_bytes,
+                    "total_bytes": total_bytes,
+                    "local_path": result.get("local_path", ""),
+                    "model_id": result.get("model_id", ""),
+                    "error": result.get("error", ""),
+                }
+                # Flat fields for dashboard-store.js; nested `job` for config.html.
                 return {
                     "ok": True,
-                    "job": {
-                        "id": result.get("job_id", job_id),
-                        "status": result.get("status", "unknown"),
-                        "progress": result.get("percent", 0),
-                        "downloaded_bytes": result.get("downloaded_bytes", 0),
-                        "total_bytes": result.get("total_bytes", 0),
-                        "local_path": result.get("local_path", ""),
-                        "model_id": result.get("model_id", ""),
-                        "error": result.get("error", ""),
-                    },
+                    "job_id": job_id,
+                    "status": status,
+                    "percent": percent,
+                    "progress": percent,
+                    "downloaded_bytes": downloaded_bytes,
+                    "total_bytes": total_bytes,
+                    "local_path": job["local_path"],
+                    "model_id": job["model_id"],
+                    "error": job["error"],
+                    "job": job,
                 }
             return {"ok": False, "error": result.get("error", "Unknown error")}
         except Exception as e:

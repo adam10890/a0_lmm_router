@@ -8,6 +8,19 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+try:
+    from usr.plugins.a0_lmm_router.helpers.context_planner import (
+        DEFAULT_EFFECTIVE_CTX_RATIO,
+        effective_ratio_for_role,
+        response_reserve_for_role,
+    )
+except ImportError:  # pragma: no cover - Agent Zero plugin import mode
+    from helpers.context_planner import (  # type: ignore
+        DEFAULT_EFFECTIVE_CTX_RATIO,
+        effective_ratio_for_role,
+        response_reserve_for_role,
+    )
+
 log = logging.getLogger("a0_lmm_router.router_context")
 
 # Preset names that enable router context guard (override via A0_LMM_ROUTER_PRESET_NAMES).
@@ -16,7 +29,7 @@ DEFAULT_LOCAL_FLEET_PRESET_NAMES = ("Local Fleet (llama.cpp RTX 4090)",)
 DEFAULT_ROUTER_CTX = 65536
 RESPONSE_TOKEN_RESERVE = 8192
 EXTRAS_TEMPLATE_RESERVE = 2048
-PROMPT_SAFETY_RATIO = 0.90
+PROMPT_SAFETY_RATIO = DEFAULT_EFFECTIVE_CTX_RATIO
 
 
 def local_fleet_preset_names() -> tuple[str, ...]:
@@ -176,14 +189,51 @@ def estimate_extras_tokens(loop_data: Any) -> int:
     )
 
 
+def context_budget_details(
+    model_cfg: dict[str, Any],
+    system_tokens: int,
+    *,
+    extras_tokens: int = 0,
+    history_tokens: int = 0,
+    role: str = "chat",
+) -> dict[str, Any]:
+    """Return hard/effective context and prompt occupancy telemetry."""
+    router_ctx = resolve_router_ctx_limit(model_cfg)
+    ratio = effective_ratio_for_role(role)
+    reserve = response_reserve_for_role(role)
+    effective = int(router_ctx * ratio)
+    budget = effective - int(system_tokens) - int(extras_tokens) - reserve
+    prompt_tokens = int(system_tokens) + int(extras_tokens) + int(history_tokens)
+    projected_tokens = prompt_tokens + reserve
+    return {
+        "hard_ctx": router_ctx,
+        "effective_ctx": effective,
+        "effective_ratio": ratio,
+        "response_reserve": reserve,
+        "system_tokens": int(system_tokens),
+        "extras_tokens": int(extras_tokens),
+        "history_tokens": int(history_tokens),
+        "prompt_tokens": prompt_tokens,
+        "projected_tokens": projected_tokens,
+        "history_budget": max(budget, 4096),
+        "occupancy": round(prompt_tokens / router_ctx, 4) if router_ctx > 0 else None,
+        "projected_occupancy": round(projected_tokens / router_ctx, 4) if router_ctx > 0 else None,
+    }
+
+
 def history_token_budget(
     model_cfg: dict[str, Any],
     system_tokens: int,
     *,
     extras_tokens: int = 0,
+    role: str = "chat",
 ) -> int:
     """Tokens available for conversation history after system, extras, and completion reserve."""
-    router_ctx = resolve_router_ctx_limit(model_cfg)
-    effective = int(router_ctx * PROMPT_SAFETY_RATIO)
-    budget = effective - int(system_tokens) - int(extras_tokens) - RESPONSE_TOKEN_RESERVE
-    return max(budget, 4096)
+    return int(
+        context_budget_details(
+            model_cfg,
+            system_tokens,
+            extras_tokens=extras_tokens,
+            role=role,
+        )["history_budget"]
+    )

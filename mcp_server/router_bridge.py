@@ -30,6 +30,62 @@ def _get_manager():
     return BackendManager.get_instance()
 
 
+def _fleet_manager_base_url() -> str:
+    return os.environ.get("A0_FLEET_MANAGER_BASE_URL", "").strip().rstrip("/")
+
+
+def _fleet_manager_headers() -> dict[str, str]:
+    headers = {
+        "Content-Type": "application/json",
+        "X-Agent-ID": os.environ.get("A0_MCP_AGENT_ID", "mcp-router"),
+        "X-Agent-Type": "mcp",
+        "X-Priority": os.environ.get("A0_MCP_PRIORITY", "normal"),
+    }
+    api_key = os.environ.get("A0_FLEET_MANAGER_API_KEY", os.environ.get("A0_LMM_ROUTER_API_KEY", "")).strip()
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
+
+
+async def _fleet_manager_get(path: str) -> dict[str, Any] | None:
+    base_url = _fleet_manager_base_url()
+    if not base_url:
+        return None
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{base_url}{path}",
+                headers=_fleet_manager_headers(),
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                data = await resp.json(content_type=None)
+                if resp.status >= 400 and isinstance(data, dict):
+                    return {"error": data.get("error", data), "status": resp.status}
+                return data
+    except aiohttp.ClientError as exc:
+        return {"error": str(exc)}
+
+
+async def _fleet_manager_post(path: str, payload: dict[str, Any], timeout: int = 120) -> dict[str, Any] | None:
+    base_url = _fleet_manager_base_url()
+    if not base_url:
+        return None
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{base_url}{path}",
+                json=payload,
+                headers=_fleet_manager_headers(),
+                timeout=aiohttp.ClientTimeout(total=timeout),
+            ) as resp:
+                data = await resp.json(content_type=None)
+                if resp.status >= 400 and isinstance(data, dict):
+                    return {"error": data.get("error", data), "status": resp.status}
+                return data
+    except aiohttp.ClientError as exc:
+        return {"error": str(exc)}
+
+
 def _slot_url(role: str, fallback_port_map: dict[str, int] | None = None) -> str | None:
     """Return the base v1 URL for a slot by role, using failover if needed.
 
@@ -78,6 +134,17 @@ async def chat_complete(
     Uses the async routing path so health probes do not block the event loop.
     The routing decision is computed once; slot_id is reused in error paths.
     """
+    fleet_payload = {
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "stream": False,
+        "routing": {"role": role, "agent_type": "mcp"},
+    }
+    fleet_result = await _fleet_manager_post("/v1/chat/completions", fleet_payload)
+    if fleet_result is not None:
+        return fleet_result
+
     mgr = _get_manager()
     decision = await mgr.select_slot_with_failover_async(role)
 
@@ -137,6 +204,10 @@ async def get_embeddings(texts: list[str]) -> dict[str, Any]:
 
 async def fleet_status() -> dict[str, Any]:
     """Return current status of all slots."""
+    fleet_result = await _fleet_manager_get("/fleet/status")
+    if fleet_result is not None:
+        return fleet_result
+
     mgr = _get_manager()
     try:
         slots = await mgr.status()
@@ -158,14 +229,27 @@ async def fleet_status() -> dict[str, Any]:
 
 
 async def start_slot(slot_id: str) -> dict[str, Any]:
+    if _fleet_manager_base_url():
+        return {
+            "ok": False,
+            "error": "Fleet Manager V1 is Docker-socket-free; start_slot belongs to a future fleet-node worker.",
+            "slot_id": slot_id,
+        }
     return await _get_manager().start_slot(slot_id)
 
 
 async def stop_slot(slot_id: str) -> bool:
+    if _fleet_manager_base_url():
+        return False
     return await _get_manager().stop_slot(slot_id)
 
 
 async def start_fleet() -> dict[str, Any]:
+    if _fleet_manager_base_url():
+        return {
+            "ok": False,
+            "error": "Fleet Manager V1 is Docker-socket-free; start_fleet belongs to a future fleet-node worker.",
+        }
     return await _get_manager().start_all()
 
 

@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 HOST_NAME="${OBSERVER_HOST:-127.0.0.1}"
-PORT="${OBSERVER_PORT:-8096}"
+PORT="${OBSERVER_PORT:-9000}"
 CONFIG_PATH="${A0_LMM_ROUTER_CONFIG:-$PLUGIN_ROOT/conf/llama_cpp_servers.yaml}"
 API_KEY="${A0_LMM_ROUTER_API_KEY:-}"
 ALLOW_PUBLIC_NO_AUTH="${A0_LMM_ROUTER_ALLOW_PUBLIC_NO_AUTH:-}"
@@ -18,7 +18,7 @@ Usage: scripts/run_provider.sh [options]
 
 Options:
   --host HOST              Bind host, default 127.0.0.1
-  --port PORT              Bind port, default 8096
+  --port PORT              Bind port, default 9000
   --config PATH            llama_cpp_servers.yaml path
   --api-key KEY            Require Authorization: Bearer KEY
   --public-no-auth         Allow non-local bind without an API key
@@ -73,7 +73,7 @@ if [[ "$INSTALL_DEPS" == "1" ]]; then
   "$PYTHON_BIN" -m pip install -r "$PLUGIN_ROOT/requirements.txt"
 fi
 
-echo "Starting a0_lmm_router standalone provider"
+echo "Starting a0_lmm_router Fleet Manager"
 echo "  Bind:   http://$OBSERVER_HOST:$OBSERVER_PORT"
 echo "  Config: $A0_LMM_ROUTER_CONFIG"
 if [[ -n "${A0_LMM_ROUTER_API_KEY:-}" ]]; then

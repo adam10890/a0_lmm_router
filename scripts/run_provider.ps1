@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$HostName = $(if ($env:OBSERVER_HOST) { $env:OBSERVER_HOST } else { "127.0.0.1" }),
-    [int]$Port = $(if ($env:OBSERVER_PORT) { [int]$env:OBSERVER_PORT } else { 8096 }),
+    [int]$Port = $(if ($env:OBSERVER_PORT) { [int]$env:OBSERVER_PORT } else { 9000 }),
     [string]$ConfigPath = $env:A0_LMM_ROUTER_CONFIG,
     [string]$ApiKey = $env:A0_LMM_ROUTER_API_KEY,
     [switch]$AllowPublicNoAuth,
@@ -38,7 +38,7 @@ if ($InstallDeps) {
     }
 }
 
-Write-Host "Starting a0_lmm_router standalone provider"
+Write-Host "Starting a0_lmm_router Fleet Manager"
 Write-Host "  Bind:   http://$($env:OBSERVER_HOST):$($env:OBSERVER_PORT)"
 Write-Host "  Config: $($env:A0_LMM_ROUTER_CONFIG)"
 Write-Host "  Auth:   $(if ($env:A0_LMM_ROUTER_API_KEY) { 'Bearer token required' } else { 'dev/no key' })"

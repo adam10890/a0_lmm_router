@@ -27,12 +27,14 @@ active_slots:
     role: chat
     enabled: true
     model_id: chat-model
+    context_size: 65536
   - id: utility
     port: 8088
     host: localhost
     role: utility
     enabled: true
     model_id: utility-model
+    context_size: 32768
 global:
   backend: remote
 """
@@ -154,8 +156,10 @@ def test_chat_completions_forwards_to_selected_chat_slot(tmp_path, monkeypatch):
     assert resp.status_code == 200
     assert resp.json()["choices"][0]["message"]["content"] == "ok"
     assert resp.headers["x-a0-router-slot-id"] == "chat"
+    assert resp.headers["x-hard-ctx"] == "65536"
     assert calls[0]["args"][0] == "http://localhost:8080/v1/chat/completions"
     assert calls[0]["kwargs"]["json"]["stream"] is False
+    assert calls[0]["kwargs"]["json"]["model"] == "chat-model"
     assert calls[0]["kwargs"]["json"]["messages"][0]["content"] == "hello"
     manager_cls._instance = None
 
@@ -175,8 +179,29 @@ def test_chat_completions_routing_metadata_can_prefer_utility_slot(tmp_path, mon
 
     assert resp.status_code == 200
     assert resp.headers["x-a0-router-slot-id"] == "utility"
+    assert resp.headers["x-hard-ctx"] == "32768"
     assert calls[0]["args"][0] == "http://localhost:8088/v1/chat/completions"
+    assert calls[0]["kwargs"]["json"]["model"] == "utility-model"
     assert "routing" not in calls[0]["kwargs"]["json"]
+    manager_cls._instance = None
+
+
+def test_chat_completions_task_type_subagent_uses_utility_slot(tmp_path, monkeypatch):
+    client, manager_cls = _client(tmp_path, monkeypatch, health_ok=True)
+    calls = _patch_forward(monkeypatch)
+
+    resp = client.post(
+        "/v1/chat/completions",
+        json={
+            "messages": [{"role": "user", "content": "run worker"}],
+            "routing": {"task_type": "sub_agent_task"},
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers["x-a0-router-slot-id"] == "utility"
+    assert calls[0]["args"][0] == "http://localhost:8088/v1/chat/completions"
+    assert calls[0]["kwargs"]["json"]["model"] == "utility-model"
     manager_cls._instance = None
 
 

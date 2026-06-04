@@ -497,11 +497,11 @@ class LlamaCppManager:
         ]
 
         if config.router_mode:
-            # ── Router Mode: directory-based hot-swap ─────────────────
+            # Router Mode: prefer curated presets; use models-dir only as fallback.
             models_dir = config.router_models_dir
             if use_wsl:
                 models_dir = self._convert_path_to_wsl(models_dir)
-            if models_dir:
+            if models_dir and not config.router_models_preset:
                 cmd.extend(['--models-dir', models_dir])
             if config.router_models_autoload:
                 cmd.append('--models-autoload')

@@ -1,0 +1,53 @@
+# compose.fleet.yml — standalone Fleet Manager control plane.
+#
+# This service intentionally does NOT mount /var/run/docker.sock. Container
+# lifecycle control belongs to a future host-side fleet-node worker.
+#
+# Usage from the plugin root:
+#   docker network create a0-fleet-net 2>nul || true
+#   copy .env.fleet.example .env.fleet
+#   docker compose --env-file .env.fleet -f docker/compose.fleet.yml up -d
+
+name: a0-fleet
+
+services:
+  fleet-manager:
+    image: ${A0_FLEET_MANAGER_IMAGE:-agent0ai/agent-zero:latest}
+    container_name: a0-fleet-manager
+    restart: unless-stopped
+    working_dir: /a0/usr/plugins/a0_lmm_router
+    command: ["python", "-m", "service"]
+    environment:
+      OBSERVER_HOST: ${OBSERVER_HOST:-0.0.0.0}
+      OBSERVER_PORT: ${OBSERVER_PORT:-9000}
+      A0_LMM_ROUTER_CONFIG: ${A0_LMM_ROUTER_CONFIG:-/a0/usr/plugins/a0_lmm_router/conf/llama_cpp_servers.yaml}
+      A0_LMM_ROUTER_API_KEY: ${A0_LMM_ROUTER_API_KEY:?Set A0_LMM_ROUTER_API_KEY in .env.fleet}
+      A0_FLEET_STATE_DB: ${A0_FLEET_STATE_DB:-/data/fleet_state.sqlite3}
+      A0_FLEET_MAX_ACTIVE: ${A0_FLEET_MAX_ACTIVE:-1}
+      A0_FLEET_MAX_QUEUE: ${A0_FLEET_MAX_QUEUE:-32}
+    ports:
+      - "${OBSERVER_PORT:-9000}:${OBSERVER_PORT:-9000}"
+    volumes:
+      - type: bind
+        source: ..
+        target: /a0/usr/plugins/a0_lmm_router
+        read_only: true
+      - type: volume
+        source: fleet-state
+        target: /data
+    networks:
+      - a0-fleet-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/health', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+volumes:
+  fleet-state:
+
+networks:
+  a0-fleet-net:
+    name: a0-fleet-net
+    external: true

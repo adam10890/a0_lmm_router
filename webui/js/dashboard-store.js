@@ -29,6 +29,56 @@ function _a0ApiCall(endpoint, data) {
     .then(({ callJsonApi }) => callJsonApi(endpoint, data));
 }
 
+/** Normalize job_status API payload (flat or nested under `job`). */
+function _jobFromApiResponse(d) {
+  if (!d || !d.ok) return null;
+  const j = d.job && typeof d.job === 'object' ? d.job : d;
+  const status = j.status || d.status || 'unknown';
+  const percent = Number(j.progress ?? j.percent ?? d.progress ?? d.percent ?? 0);
+  const downloaded = Number(j.downloaded_bytes ?? d.downloaded_bytes ?? 0);
+  const total = Number(j.total_bytes ?? d.total_bytes ?? 0);
+  return {
+    status,
+    percent: Number.isFinite(percent) ? percent : 0,
+    downloaded_bytes: downloaded,
+    total_bytes: total,
+    model_id: j.model_id || d.model_id || '',
+    error: j.error || d.error || '',
+  };
+}
+
+function _formatBytes(n) {
+  const v = Number(n) || 0;
+  if (v >= 1024 ** 3) return (v / 1024 ** 3).toFixed(2) + ' GB';
+  if (v >= 1024 ** 2) return (v / 1024 ** 2).toFixed(1) + ' MB';
+  if (v >= 1024) return (v / 1024).toFixed(0) + ' KB';
+  return v + ' B';
+}
+
+/** Accept repo id or full huggingface.co URL; return { repo, file } hints. */
+function _parseHfInstallInput(repoRaw, fileRaw) {
+  let repo = (repoRaw || '').trim();
+  let file = (fileRaw || '').trim();
+  if (/huggingface\.co/i.test(repo)) {
+    try {
+      const u = new URL(repo.startsWith('http') ? repo : 'https://' + repo);
+      const parts = u.pathname.replace(/^\/+/, '').split('/').filter(Boolean);
+      if (parts.length >= 2 && parts[0] !== 'datasets') {
+        repo = parts[0] + '/' + parts[1];
+        if (!file && parts.length >= 3) file = parts.slice(2).join('/');
+      }
+    } catch (_) { /* keep raw repo */ }
+  }
+  if (!file && /\.gguf$/i.test(repo)) {
+    const slash = repo.lastIndexOf('/');
+    if (slash > 0) {
+      file = repo.slice(slash + 1);
+      repo = repo.slice(0, slash);
+    }
+  }
+  return { repo, file };
+}
+
 function createDashboardStore() {
   const POLL_INTERVAL_MS = 5000;
   // A0 dispatches all plugin APIs under /api/plugins/<plugin_name>/<handler>.
@@ -97,6 +147,7 @@ function createDashboardStore() {
       installing: false,
       progress: 0,
       status: '',
+      progressLabel: '',
       error: '',
       success: '',
       jobId: null,
@@ -158,6 +209,19 @@ function createDashboardStore() {
     init() {
       this.refresh();
       this.pollTimer = setInterval(() => this.refresh(), POLL_INTERVAL_MS);
+      // Cold-start race: A0 may load before router/host-helper are ready.
+      setTimeout(() => this._startupFleetSync(), 2500);
+      setTimeout(() => this._startupFleetSync(), 8000);
+    },
+
+    async _startupFleetSync() {
+      const needsReconnect =
+        this.reconnecting ||
+        this.fleetMode.mode === 'idle' ||
+        this.fleetMode.mode === 'unknown' ||
+        (this.slots || []).every((slot) => !slot.running);
+      if (!needsReconnect) return;
+      await this.reconnectFleet();
     },
 
     cleanup() {
@@ -439,12 +503,27 @@ function createDashboardStore() {
     },
 
     async installFromForm() {
-      const { repo, file, role } = this.installForm;
-      if (!repo || !file) return;
+      const parsed = _parseHfInstallInput(this.installForm.repo, this.installForm.file);
+      const repo = parsed.repo;
+      const file = parsed.file;
+      const role = this.installForm.role;
+      if (!repo || !file) {
+        this.installForm.error = 'Repo ID and .gguf filename are required';
+        return;
+      }
+      if (!/\.gguf$/i.test(file)) {
+        this.installForm.error =
+          'Filename must end with .gguf. For google/gemma-4-12B-it use a GGUF repo ' +
+          '(e.g. unsloth/gemma-4-12B-it-GGUF, file gemma-4-12b-it-Q4_K_M.gguf).';
+        return;
+      }
 
+      this.installForm.repo = repo;
+      this.installForm.file = file;
       this.installForm.installing = true;
       this.installForm.progress = 0;
       this.installForm.status = 'queued';
+      this.installForm.progressLabel = '';
       this.installForm.error = '';
       this.installForm.success = '';
 
@@ -452,31 +531,34 @@ function createDashboardStore() {
         const d = await _a0ApiCall(ENDPOINTS.install, { repo_id: repo, filename: file, role });
         if (d.ok && d.job_id) {
           this.installForm.jobId = d.job_id;
-          // Poll the job
-          const timer = setInterval(async () => {
-            try {
-              const jd = await _a0ApiCall(ENDPOINTS.jobStatus, { job_id: d.job_id });
-              if (jd.ok) {
-                this.installForm.progress = jd.percent || 0;
-                this.installForm.status = jd.status;
-                if (jd.status === 'done') {
-                  clearInterval(timer);
-                  this.installForm.installing = false;
-                  this.installForm.success = `Model installed: ${jd.model_id || file}`;
-                  this.installForm.jobId = null;
-                  this._fetchInstalledModels();
-                } else if (jd.status === 'error' || jd.status === 'cancelled') {
-                  clearInterval(timer);
-                  this.installForm.installing = false;
-                  this.installForm.error = jd.error || 'Download failed';
-                  this.installForm.jobId = null;
-                }
+          this._pollInstallJob(d.job_id, {
+            onUpdate: (job) => {
+              this.installForm.progress = job.percent;
+              this.installForm.status = job.status;
+              if (job.total_bytes > 0) {
+                this.installForm.progressLabel =
+                  job.percent.toFixed(1) + '% — ' + job.status +
+                  ' (' + _formatBytes(job.downloaded_bytes) + ' / ' + _formatBytes(job.total_bytes) + ')';
+              } else if (job.downloaded_bytes > 0) {
+                this.installForm.progressLabel =
+                  job.percent.toFixed(1) + '% — ' + job.status +
+                  ' (' + _formatBytes(job.downloaded_bytes) + ' downloaded)';
+              } else {
+                this.installForm.progressLabel = job.percent.toFixed(1) + '% — ' + job.status;
               }
-            } catch (_) {
-              // Silent, keep polling
-            }
-          }, 2000);
-          this.jobPollTimers[d.job_id] = timer;
+            },
+            onDone: (job) => {
+              this.installForm.installing = false;
+              this.installForm.success = `Model installed: ${job.model_id || file}`;
+              this.installForm.jobId = null;
+              this._fetchInstalledModels();
+            },
+            onFail: (job) => {
+              this.installForm.installing = false;
+              this.installForm.error = job.error || 'Download failed';
+              this.installForm.jobId = null;
+            },
+          });
         } else {
           this.installForm.installing = false;
           this.installForm.error = d.error || 'Failed to start download';
@@ -487,32 +569,50 @@ function createDashboardStore() {
       }
     },
 
-    _pollJobStatus(jobId, statusKey) {
-      // Poll every 2 seconds
-      const timer = setInterval(async () => {
+    _pollInstallJob(jobId, handlers) {
+      if (this.jobPollTimers[jobId]) {
+        clearInterval(this.jobPollTimers[jobId]);
+      }
+      const tick = async () => {
         try {
-          const d = await _a0ApiCall(ENDPOINTS.jobStatus, { job_id: jobId });
-          if (d.ok) {
-            this.installStatus[statusKey].percent = d.percent || 0;
-            if (d.status === 'done') {
-              this.installStatus[statusKey].status = 'done';
-              clearInterval(timer);
-              delete this.jobPollTimers[jobId];
-              // Refresh installed models list
-              this._fetchInstalledModels();
-            } else if (d.status === 'error' || d.status === 'cancelled') {
-              this.installStatus[statusKey].status = d.status;
-              this.installStatus[statusKey].error = d.error || 'Download failed';
-              clearInterval(timer);
-              delete this.jobPollTimers[jobId];
-            }
-            // Keep polling if queued or downloading
+          const raw = await _a0ApiCall(ENDPOINTS.jobStatus, { job_id: jobId });
+          const job = _jobFromApiResponse(raw);
+          if (!job) return;
+          handlers.onUpdate(job);
+          if (job.status === 'done') {
+            clearInterval(this.jobPollTimers[jobId]);
+            delete this.jobPollTimers[jobId];
+            handlers.onDone(job);
+          } else if (job.status === 'error' || job.status === 'cancelled' || job.status === 'unknown') {
+            if (job.status === 'unknown') return;
+            clearInterval(this.jobPollTimers[jobId]);
+            delete this.jobPollTimers[jobId];
+            handlers.onFail(job);
           }
         } catch (_) {
-          // Silent fail, keep polling
+          /* keep polling */
         }
-      }, 2000);
+      };
+      tick();
+      const timer = setInterval(tick, 1000);
       this.jobPollTimers[jobId] = timer;
+    },
+
+    _pollJobStatus(jobId, statusKey) {
+      this._pollInstallJob(jobId, {
+        onUpdate: (job) => {
+          this.installStatus[statusKey].percent = job.percent;
+          this.installStatus[statusKey].status = job.status;
+        },
+        onDone: () => {
+          this.installStatus[statusKey].status = 'done';
+          this._fetchInstalledModels();
+        },
+        onFail: (job) => {
+          this.installStatus[statusKey].status = job.status;
+          this.installStatus[statusKey].error = job.error || 'Download failed';
+        },
+      });
     },
 
     async assignModelToSlot(slotId, modelId) {

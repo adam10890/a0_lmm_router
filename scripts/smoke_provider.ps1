@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$BaseUrl = "http://127.0.0.1:8096",
+    [string]$BaseUrl = "http://127.0.0.1:9000",
     [string]$ApiKey = $env:A0_LMM_ROUTER_API_KEY
 )
 
@@ -56,6 +56,8 @@ function Invoke-SmokeRequest {
 }
 
 Invoke-SmokeRequest -Name "health" -Method GET -Path "/health"
+
+Invoke-SmokeRequest -Name "fleet status" -Method GET -Path "/fleet/status"
 
 Invoke-SmokeRequest `
     -Name "routing request" `

@@ -1,16 +1,9 @@
-import os
 from flask import Request
 from helpers.api import ApiHandler
-from helpers import files
-
-
-def _resolve_conf_path() -> str:
-    env_conf = os.environ.get("A0_LMM_ROUTER_CONFIG", "")
-    plugin_conf = files.get_abs_path("usr/plugins/a0_lmm_router/conf/llama_cpp_servers.yaml")
-    root_conf = files.get_abs_path("conf/llama_cpp_servers.yaml")
-    if env_conf and os.path.exists(env_conf):
-        return env_conf
-    return root_conf if os.path.exists(root_conf) else plugin_conf
+try:
+    from usr.plugins.a0_lmm_router.helpers.conf_resolver import resolve_conf_path
+except ImportError:
+    from helpers.conf_resolver import resolve_conf_path
 
 
 def _result_ok(result: dict) -> bool:
@@ -25,7 +18,7 @@ class LlamacppControl(ApiHandler):
         try:
             from usr.plugins.a0_lmm_router.helpers.llama_cpp_manager import BackendManager
 
-            conf_path = _resolve_conf_path()
+            conf_path = resolve_conf_path(__file__)
             manager = BackendManager.get_instance(conf_path)
 
             if operation == "start":

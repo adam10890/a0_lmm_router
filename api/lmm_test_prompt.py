@@ -32,31 +32,21 @@ Response:
 from __future__ import annotations
 
 import json
-import os
 import time
-from pathlib import Path
 
 import aiohttp
 import yaml
 from flask import Request
 
 from helpers.api import ApiHandler
+try:
+    from usr.plugins.a0_lmm_router.helpers.conf_resolver import resolve_conf_path
+except ImportError:
+    from helpers.conf_resolver import resolve_conf_path
 
 
 DEFAULT_MAX_TOKENS = 512
 REQUEST_TIMEOUT_SEC = 120
-
-
-def _resolve_conf_path() -> str:
-    """Same self-contained resolver as llamacpp_status — kept local to avoid
-    depending on `helpers.files` (which imports the fragile simpleeval)."""
-    env_path = os.environ.get("A0_LMM_ROUTER_CONFIG", "").strip()
-    if env_path:
-        return env_path
-    here = Path(__file__).resolve()
-    plugin_conf = str(here.parents[1] / "conf" / "llama_cpp_servers.yaml")
-    root_conf = str(here.parents[4] / "conf" / "llama_cpp_servers.yaml")
-    return plugin_conf if os.path.exists(plugin_conf) else root_conf
 
 
 def _resolve_slot(config: dict, slot_key: str):
@@ -90,7 +80,7 @@ class LmmTestPrompt(ApiHandler):
             return {"ok": False, "error": "prompt is required (non-empty string)"}
 
         try:
-            conf_path = _resolve_conf_path()
+            conf_path = resolve_conf_path(__file__)
             with open(conf_path, "r", encoding="utf-8") as f:
                 config = yaml.safe_load(f) or {}
 
@@ -144,7 +134,7 @@ class LmmTestPrompt(ApiHandler):
         try:
             timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT_SEC)
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(url, data=json.dumps(payload), headers={"Content-Type": "application/json"}) as resp:
+                async with session.post(url, json=payload) as resp:
                     text = await resp.text()
                     duration_ms = int((time.monotonic() - started) * 1000)
                     if resp.status >= 400:

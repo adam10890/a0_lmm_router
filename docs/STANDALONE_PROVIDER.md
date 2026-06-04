@@ -1,8 +1,9 @@
 # Standalone Provider Runbook
 
 Phase 9 packages the router service as a small local OpenAI-compatible
-provider. It does not change Agent Zero plugin behavior and it does not start
-or stop llama.cpp containers.
+provider. It now also acts as the V1 Fleet Manager control plane: agent-aware
+state, bounded queueing, and fleet status endpoints. It does not change Agent
+Zero plugin behavior and it does not start or stop llama.cpp containers.
 
 ## Endpoints
 
@@ -10,6 +11,9 @@ or stop llama.cpp containers.
 - `POST /routing/request` returns the routing decision for an intent payload.
 - `POST /v1/chat/completions` forwards non-streaming and streaming requests to
   the selected llama.cpp slot.
+- `GET /fleet/status` returns queue, agent, request, slot, and state summary.
+- `GET /fleet/agents` lists registered/observed agents.
+- `POST /fleet/agents/register` registers an agent identity manually.
 
 When `A0_LMM_ROUTER_API_KEY` is set, every endpoint except `/health` requires:
 
@@ -30,7 +34,7 @@ With a local API key:
 ```powershell
 .\scripts\run_provider.ps1 `
   -HostName 127.0.0.1 `
-  -Port 8096 `
+  -Port 9000 `
   -ApiKey "change-me" `
   -InstallDeps
 ```
@@ -82,9 +86,13 @@ Minimum useful values:
 
 ```text
 OBSERVER_HOST=127.0.0.1
-OBSERVER_PORT=8096
+OBSERVER_PORT=9000
 A0_LMM_ROUTER_CONFIG=conf/llama_cpp_servers.yaml
 A0_LMM_ROUTER_API_KEY=change-me
+A0_FLEET_MAX_ACTIVE=1
+A0_FLEET_MAX_QUEUE=32
+# For MCP clients that should call this service instead of BackendManager:
+# A0_FLEET_MANAGER_BASE_URL=http://127.0.0.1:9000
 ```
 
 ## Dependency Map
@@ -115,7 +123,7 @@ use the A0 virtual environment.
 Point OpenAI-compatible clients at:
 
 ```text
-http://127.0.0.1:8096/v1
+http://127.0.0.1:9000/v1
 ```
 
 Use the configured API key as the client API key. For clients that only support

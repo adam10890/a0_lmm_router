@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import os
-from pathlib import Path
 
 import yaml
 from flask import Request
@@ -17,6 +16,7 @@ from helpers.api import ApiHandler
 
 try:
     from usr.plugins.a0_lmm_router.helpers import fleet_models
+    from usr.plugins.a0_lmm_router.helpers.conf_resolver import resolve_conf_path
 except ImportError:
     import sys
     _here = os.path.dirname(os.path.abspath(__file__))
@@ -24,6 +24,7 @@ except ImportError:
     if _plugin_root not in sys.path:
         sys.path.insert(0, _plugin_root)
     from helpers import fleet_models
+    from helpers.conf_resolver import resolve_conf_path
 
 logger = logging.getLogger(__name__)
 
@@ -36,19 +37,6 @@ _ROLE_TO_SLOT_ID = {
     "vision": "slot_vision",
     "reasoning": "slot_reasoning",
 }
-
-
-def _resolve_yaml_path() -> str:
-    """Find llama_cpp_servers.yaml using same logic as compute_monitor."""
-    env_conf = os.environ.get("A0_LMM_ROUTER_CONFIG", "").strip()
-    if env_conf and os.path.exists(env_conf):
-        return env_conf
-    here = Path(__file__).resolve()
-    plugin_conf = str(here.parent.parent / "conf" / "llama_cpp_servers.yaml")
-    root_conf = str(here.parents[4] / "conf" / "llama_cpp_servers.yaml")
-    if os.path.exists(root_conf):
-        return root_conf
-    return plugin_conf
 
 
 def _update_yaml_slot(yaml_path: str, slot_id: str, model_id: str) -> bool:
@@ -108,7 +96,7 @@ class AssignModel(ApiHandler):
 
             # 2) Also update llama_cpp_servers.yaml so status display stays in sync
             slot_id = _ROLE_TO_SLOT_ID.get(slot.lower(), f"slot_{slot}")
-            yaml_path = _resolve_yaml_path()
+            yaml_path = resolve_conf_path(__file__)
             yaml_updated = _update_yaml_slot(yaml_path, slot_id, model_id)
 
             return {

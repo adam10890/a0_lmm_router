@@ -46,9 +46,13 @@ Returns:
     }
 """
 
+import logging
+
 from flask import Request
 
 from helpers.api import ApiHandler
+
+logger = logging.getLogger(__name__)
 
 
 class LmmSlotRecommendations(ApiHandler):
@@ -120,7 +124,8 @@ class LmmSlotRecommendations(ApiHandler):
                 "installed_diagnostics": installed_diagnostics,
                 "slots": slot_suggestions,
             }
-        except Exception as e:
+        except (ValueError, KeyError, TypeError, OSError) as e:
+            logger.exception("slot recommendations failed")
             return {
                 "ok": False,
                 "error": f"{type(e).__name__}: {e}",

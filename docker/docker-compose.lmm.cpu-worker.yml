@@ -1,0 +1,64 @@
+# Optional CPU utility worker for subagents/background work.
+#
+# Run alongside Router Mode when you want extra local throughput without
+# consuming RTX 4090 VRAM:
+#
+#   docker compose -f docker-compose.lmm.cpu-worker.yml \
+#     --env-file docker-compose.lmm.env --profile cpu-worker up -d
+#
+# Then enable the matching utility_cpu slot in conf/llama_cpp_servers.yaml.
+
+name: a0-lmm
+
+services:
+  a0-llama-utility-cpu:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    container_name: a0-llama-utility-cpu
+    profiles: ["cpu-worker"]
+    restart: unless-stopped
+    env_file:
+      - docker-compose.lmm.env
+    ports:
+      - "8089:8080"
+    volumes:
+      - type: bind
+        source: ${LLAMA_MODELS_DIR:-C:/Users/frant/A0-Data-Permanent/A0_v.adam/models}
+        target: /models
+        read_only: true
+    networks:
+      - a0-lmm-net
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 120s
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--alias"
+      - "utility_cpu"
+      - "--model"
+      - "${CPU_UTILITY_MODEL_PATH:-/models/utility/gemma-3-270m/gemma-3-270m-it-F16.gguf}"
+      - "--n-gpu-layers"
+      - "0"
+      - "--threads"
+      - "${CPU_UTILITY_THREADS:-16}"
+      - "--threads-batch"
+      - "${CPU_UTILITY_THREADS_BATCH:-24}"
+      - "--ctx-size"
+      - "${CPU_UTILITY_CTX_SIZE:-32768}"
+      - "--parallel"
+      - "${CPU_UTILITY_PARALLEL:-1}"
+      - "--batch-size"
+      - "${CPU_UTILITY_BATCH_SIZE:-256}"
+      - "--ubatch-size"
+      - "${CPU_UTILITY_UBATCH_SIZE:-256}"
+      - "--metrics"
+
+networks:
+  a0-lmm-net:
+    name: a0-lmm-net
+    external: true

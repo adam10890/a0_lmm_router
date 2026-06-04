@@ -6,5 +6,5 @@ author: "frantz"
 settings_sections:
   - external
 per_project_config: true
-per_agent_config: false
+per_agent_config: true
 always_enabled: false

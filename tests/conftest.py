@@ -26,6 +26,9 @@ _REPO_ROOT = str(Path(__file__).resolve().parents[4])
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+_PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+_PLUGIN_HELPERS = str(_PLUGIN_ROOT / "helpers")
+
 
 # ── 2. Stub Agent Zero helpers ───────────────────────────────────────────────
 # These are Agent Zero core modules that the plugin's workflow_registry imports
@@ -43,6 +46,8 @@ if "helpers" not in sys.modules:
     _helpers = _make_stub("helpers")
 else:
     _helpers = sys.modules["helpers"]
+if hasattr(_helpers, "__path__") and _PLUGIN_HELPERS not in _helpers.__path__:
+    _helpers.__path__.append(_PLUGIN_HELPERS)
 
 # helpers.files stub — only the attributes workflow_registry.py uses
 if "helpers.files" not in sys.modules:

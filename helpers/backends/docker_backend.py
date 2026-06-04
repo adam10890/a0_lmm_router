@@ -394,10 +394,11 @@ class DockerBackend(InferenceBackend):
         if config.get("router_mode"):
             # ── Router Mode: directory-based hot-swap ─────────────────
             rdir = config.get("router_models_dir", "") or CONTAINER_MODELS_DIR
-            cmd.extend(["--models-dir", rdir])
+            preset = config.get("router_models_preset", "")
+            if rdir and not preset:
+                cmd.extend(["--models-dir", rdir])
             if config.get("router_models_autoload", True):
                 cmd.append("--models-autoload")
-            preset = config.get("router_models_preset", "")
             if preset:
                 cmd.extend(["--models-preset", preset])
             rmax = int(config.get("router_models_max", 1))
