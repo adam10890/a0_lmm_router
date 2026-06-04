@@ -1,56 +1,63 @@
-# DOX contract — a0_lmm_router
+# AGENTS.md — a0_lmm_router
 
-## Purpose
+**Version:** 1.3.0 | **Target:** Agent Zero v0.9.7–v1.17
 
-Local llama.cpp fleet management and routing plugin for Agent Zero. It owns
-slot lifecycle, health/failover, router dashboards, MCP tools, and the emerging
-standalone OpenAI-compatible provider track.
+## What this plugin does
 
-## Ownership
+Full-stack LMM (Local Multimodal Model) management layer for Agent Zero. Combines:
+- **Backend** — start/stop/monitor `llama.cpp` server slots across remote Docker containers, local Docker SDK, or local subprocesses
+- **Smart routing** — classify messages and route to the best slot by task type, complexity, and VRAM
+- **MCP server** — Streamable HTTP server on port 8095 exposing 9 tools + 4 resources to any MCP client
 
-- This plugin is a primary product track.
-- Portable surfaces are the priority: MCP server and OpenAI-compatible HTTP.
-- A0 WebUI and extension hooks are useful wrappers, not the core product.
-- Keep branch-router work separate from future meta-router/RBAC work unless a
-  task explicitly crosses that boundary.
+## Key files
 
-## Local Contracts
+| Path | Role |
+|---|---|
+| `plugin.yaml` | Manifest — settings section: `router` |
+| `hooks.py` | `install(**kwargs)` — pip-installs `requirements.txt` deps |
+| `launcher.py` | MCP + router server entry point |
+| `helpers/` | Slot managers, health monitor, model recommendation, HF token |
+| `tools/` | Agent-facing tools |
+| `api/` | REST endpoints registered with A0 |
+| `extensions/python/` | Python lifecycle hooks |
+| `extensions/webui/` | Frontend injection points |
+| `webui/` | Real-time dashboard (VRAM monitor, model finder, slot assignment) |
+| `mcp_server/` | Streamable HTTP MCP server (port 8095) |
+| `conf/` | Default configuration files |
+| `requirements.txt` | `mcp`, `aiohttp`, `pyyaml` |
 
-- `helpers/llama_cpp_manager.py` owns BackendManager and slot orchestration.
-- `service/` owns the standalone observer/router HTTP service.
-- `mcp_server/` owns Streamable HTTP MCP tools/resources.
-- `conf/llama_cpp_servers.yaml` describes desired local fleet configuration.
-- `docker/` owns compose files and Windows/dev launch helpers.
-- `scripts/` owns operator-facing smoke/run helpers for standalone and local
-  workflows.
-- `docs/` owns plugin-local runbooks such as the standalone provider package
-  guide.
-- Do not add memory ownership, agent identity ownership, or SharedBrain policy
-  ownership to this plugin. It may enforce routing policy, but it must not
-  become the whole operating system.
-- Keep non-streaming forwarding, streaming forwarding, auth, and packaging as
-  separate implementation gates.
+## Backend types
 
-## Work Guidance
+| Type | When to use |
+|---|---|
+| `remote` | llama.cpp running in a separate Docker container on the network |
+| `docker` | Local Docker SDK — plugin manages container lifecycle |
+| `subprocess` | Child process on the same host |
 
-- Before provider work, inspect `service/app.py`, `service/routing_intent.py`,
-  `service/observer.py`, and `mcp_server/router_bridge.py`.
-- The current `POST /routing/request` path is dry-run intent routing. Do not
-  treat it as completed OpenAI-compatible forwarding.
-- When adding `POST /v1/chat/completions`, use the existing routing decision
-  path and forward to the selected llama.cpp slot without Docker control.
-- Do not modify Agent Zero plugin behavior while building standalone service
-  phases unless the task explicitly says to.
-- Prefer server-agnostic behavior over Windows/RTX-4090 assumptions.
+## MCP server
 
-## Verification
+Port 8095. 9 tools + 4 resources. Exposed to any MCP client (Cursor, Claude Desktop, etc.). Started by `launcher.py`. Config in `conf/`.
 
-- Run focused tests under `tests/` for touched behavior.
-- For service/router edits, run tests covering routing intent and slot
-  failover where practical.
-- At minimum, compile touched Python files with `python -m py_compile`.
+## How to add a new agent tool
 
-## Child DOX Index
+1. Create `tools/<tool_name>.py` with a `Tool` subclass.
+2. A0 auto-discovers all files in `tools/`.
 
-No child AGENTS.md files yet. Add child docs for `service/` or `mcp_server/`
-once those areas gain independent release gates.
+## How to add a REST endpoint
+
+Add `api/<endpoint>.py` — A0 auto-discovers.
+
+## How to add an MCP tool
+
+Add to `mcp_server/` following the existing tool pattern and register in the tool list.
+
+## Dependency install
+
+`hooks.py::install(**kwargs)` parses `requirements.txt` and calls `pip install` only for missing packages — idempotent and offline-safe when deps are already present.
+
+## Constraints
+
+- MCP server port 8095 — must not be used by another plugin.
+- `per_project_config: true` — each project can override router config.
+- Config section name is `router` (not `agent`) — custom settings section.
+- `hooks.py` does not uninstall shared deps on removal (other plugins may depend on them).
