@@ -37,21 +37,23 @@ active_slots:
     enabled: false
     router_mode: false
 
-  # Dedicated CPU slot for the Scribe super-ego (a0_scribe plugin).
-  # Runs a small local model on CPU so it never competes with the GPU chat
-  # model or the API budget. Disabled until a CPU model is installed; until
-  # then the scribe failover chain falls back to slot_router (see below).
-  - id: scribe_cpu
+  # Dedicated GPU slot for the Scribe super-ego (a0_scribe plugin).
+  # Runs gemma-4-8b on the GPU with 2 parallel sequences. gemma-4-8b is small
+  # enough to coexist with the chat model (and even a Local Fleet preset) on a
+  # 24 GB RTX 4090, so the scribe never blocks the ego. Start the container with
+  # docker/docker-compose.lmm.scribe.yml. Until it is up, the scribe failover
+  # chain falls back to slot_router (which serves the [scribe] preset alias).
+  - id: scribe_gpu
     port: 8090
     role: scribe
-    model_id: scribe_cpu
-    context_size: 16384
-    gpu_layers: 0
-    batch_size: 256
-    threads: 16
-    parallel_slots: 1
-    flash_attention: false
-    enabled: false
+    model_id: scribe
+    context_size: 32768
+    gpu_layers: -1
+    batch_size: 512
+    threads: 8
+    parallel_slots: 2
+    flash_attention: on
+    enabled: true
     router_mode: false
 
 # Example: slot_chat with MTP enabled per PR #22673
@@ -147,7 +149,7 @@ global:
     chat: [slot_router, utility_cpu]
     utility: [utility_cpu, slot_router]
     embed: [slot_router]
-    scribe: [scribe_cpu, utility_cpu, slot_router]
+    scribe: [scribe_gpu, slot_router, utility_cpu]
   lmm_hosts:
     chat: host.docker.internal:8080
     utility: host.docker.internal:8088
@@ -200,7 +202,7 @@ context_policy:
     chat: 65536
     utility: 16384
     embedding: 8192
-    scribe: 16384
+    scribe: 32768
 
 # -----------------------------------------------------------------
 # Ephemeral per-conversation containers

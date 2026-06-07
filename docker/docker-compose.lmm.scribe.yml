@@ -1,0 +1,78 @@
+# Dedicated GPU container for the Scribe super-ego (a0_scribe plugin).
+#
+# Serves gemma-4-8b on port 8090 with 2 parallel sequences. gemma-4-8b is small
+# enough (~5 GB Q4) to coexist with the chat model — and even a Local Fleet
+# preset — on a 24 GB RTX 4090, so the scribe never blocks the ego.
+#
+# Start it alongside the rest of the fleet:
+#
+#   docker compose -f docker-compose.lmm.scribe.yml \
+#     --env-file docker-compose.lmm.env --profile scribe up -d
+#
+# The matching scribe_gpu slot is already enabled in conf/llama_cpp_servers.yaml.
+# Override the model with SCRIBE_MODEL_PATH in docker-compose.lmm.env if your
+# gemma-4-8b GGUF lives elsewhere.
+
+name: a0-lmm
+
+services:
+  a0-llama-scribe:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: a0-llama-scribe
+    profiles: ["scribe"]
+    restart: unless-stopped
+    env_file:
+      - docker-compose.lmm.env
+    ports:
+      - "8090:8080"
+    volumes:
+      - type: bind
+        source: ${LLAMA_MODELS_DIR:-C:/Users/frant/A0-Data-Permanent/A0_v.adam/models}
+        target: /models
+        read_only: true
+    networks:
+      - a0-lmm-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 120s
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--alias"
+      - "scribe"
+      - "--model"
+      - "${SCRIBE_MODEL_PATH:-/models/unsloth--gemma-4-8B-it-GGUF/gemma-4-8b-it-Q4_K_M.gguf}"
+      - "--n-gpu-layers"
+      - "999"
+      - "--ctx-size"
+      - "${SCRIBE_CTX_SIZE:-32768}"
+      - "--parallel"
+      - "${SCRIBE_PARALLEL:-2}"
+      - "--batch-size"
+      - "${SCRIBE_BATCH_SIZE:-512}"
+      - "--ubatch-size"
+      - "${SCRIBE_UBATCH_SIZE:-512}"
+      - "--flash-attn"
+      - "on"
+      - "--cache-type-k"
+      - "q8_0"
+      - "--cache-type-v"
+      - "q8_0"
+      - "--metrics"
+
+networks:
+  a0-lmm-net:
+    name: a0-lmm-net
+    external: true
