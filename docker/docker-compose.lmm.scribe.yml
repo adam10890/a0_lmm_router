@@ -1,8 +1,8 @@
 # Dedicated GPU container for the Scribe super-ego (a0_scribe plugin).
 #
-# Serves gemma-4-8b on port 8090 with 2 parallel sequences. gemma-4-8b is small
-# enough (~5 GB Q4) to coexist with the chat model — and even a Local Fleet
-# preset — on a 24 GB RTX 4090, so the scribe never blocks the ego.
+# Serves gemma-4-E4B on port 8090 with 2 parallel sequences. gemma-4-E4B is
+# small (~3.5 GB Q5) — it coexists with the chat model, and even a Local Fleet
+# preset, on a 24 GB RTX 4090, so the scribe never blocks the ego.
 #
 # Start it alongside the rest of the fleet:
 #
@@ -10,8 +10,7 @@
 #     --env-file docker-compose.lmm.env --profile scribe up -d
 #
 # The matching scribe_gpu slot is already enabled in conf/llama_cpp_servers.yaml.
-# Override the model with SCRIBE_MODEL_PATH in docker-compose.lmm.env if your
-# gemma-4-8b GGUF lives elsewhere.
+# Override the model with SCRIBE_MODEL_PATH in docker-compose.lmm.env.
 
 name: a0-lmm
 
@@ -53,7 +52,7 @@ services:
       - "--alias"
       - "scribe"
       - "--model"
-      - "${SCRIBE_MODEL_PATH:-/models/unsloth--gemma-4-8B-it-GGUF/gemma-4-8b-it-Q4_K_M.gguf}"
+      - "${SCRIBE_MODEL_PATH:-/models/gemma-4-E4B-it-OBLITERATED-Q5_K_M.gguf}"
       - "--n-gpu-layers"
       - "999"
       - "--ctx-size"

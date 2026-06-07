@@ -38,7 +38,7 @@ active_slots:
     router_mode: false
 
   # Dedicated GPU slot for the Scribe super-ego (a0_scribe plugin).
-  # Runs gemma-4-8b on the GPU with 2 parallel sequences. gemma-4-8b is small
+  # Runs gemma-4-E4B on the GPU with 2 parallel sequences. gemma-4-E4B is small
   # enough to coexist with the chat model (and even a Local Fleet preset) on a
   # 24 GB RTX 4090, so the scribe never blocks the ego. Start the container with
   # docker/docker-compose.lmm.scribe.yml. Until it is up, the scribe failover
