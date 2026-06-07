@@ -37,6 +37,23 @@ active_slots:
     enabled: false
     router_mode: false
 
+  # Dedicated CPU slot for the Scribe super-ego (a0_scribe plugin).
+  # Runs a small local model on CPU so it never competes with the GPU chat
+  # model or the API budget. Disabled until a CPU model is installed; until
+  # then the scribe failover chain falls back to slot_router (see below).
+  - id: scribe_cpu
+    port: 8090
+    role: scribe
+    model_id: scribe_cpu
+    context_size: 16384
+    gpu_layers: 0
+    batch_size: 256
+    threads: 16
+    parallel_slots: 1
+    flash_attention: false
+    enabled: false
+    router_mode: false
+
 # Example: slot_chat with MTP enabled per PR #22673
 # https://github.com/ggml-org/llama.cpp/pull/22673
 # Requires an MTP-capable model (Qwen3.6-27B / Qwen3.6-35BA3B / DeepSeek V3/R1).
@@ -130,10 +147,12 @@ global:
     chat: [slot_router, utility_cpu]
     utility: [utility_cpu, slot_router]
     embed: [slot_router]
+    scribe: [scribe_cpu, utility_cpu, slot_router]
   lmm_hosts:
     chat: host.docker.internal:8080
     utility: host.docker.internal:8088
     embedding: host.docker.internal:8082
+    scribe: host.docker.internal:8090
   docker_image_gpu: ghcr.io/ggml-org/llama.cpp:server-cuda
   docker_image_cpu: ghcr.io/ggml-org/llama.cpp:server
   docker_network: a0-lmm-net
@@ -181,6 +200,7 @@ context_policy:
     chat: 65536
     utility: 16384
     embedding: 8192
+    scribe: 16384
 
 # -----------------------------------------------------------------
 # Ephemeral per-conversation containers
