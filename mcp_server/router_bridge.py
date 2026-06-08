@@ -117,7 +117,7 @@ def _config_fallback_url(
     if role in hosts:
         return f"http://{hosts[role]}/v1"
 
-    defaults = fallback_port_map or {"chat": 8080, "utility": 8088, "embedding": 8082}
+    defaults = fallback_port_map or {"chat": 8080, "utility": 8088, "embedding": 8082, "scribe": 8090}
     port = defaults.get(role)
     return f"http://localhost:{port}/v1" if port else None
 

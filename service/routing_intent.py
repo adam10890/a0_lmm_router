@@ -35,7 +35,7 @@ _KNOWN_AGENT_TYPES = frozenset({
 _KNOWN_TASK_TYPES = frozenset({
     "chat", "planning", "coding", "summarization", "embedding",
     "tool_calling", "private_data_processing", "sub_agent_task",
-    "background_worker", "research", "debugging",
+    "background_worker", "research", "debugging", "documentation",
 })
 
 _KNOWN_PRIVACY_MODES = frozenset({
@@ -56,6 +56,7 @@ _TASK_TO_ROLE: Dict[str, str] = {
     "private_data_processing":  "utility",
     "background_worker":        "utility",
     "sub_agent_task":           "utility",
+    "documentation":            "scribe",
     "summarization":            "chat",
     "chat":                     "chat",
 }
@@ -71,6 +72,8 @@ def _router_alias_from_role(role: str) -> str:
         return "embedding"
     if role_key == "utility":
         return "utility"
+    if role_key == "scribe":
+        return "scribe"
     return "chat"
 
 

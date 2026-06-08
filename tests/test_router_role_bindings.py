@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[4]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -89,3 +91,30 @@ def test_router_url_accepts_router_range():
     from usr.plugins.a0_lmm_router.api.router_aliases import _router_url
 
     assert _router_url({"port": 8080}) == "http://host.docker.internal:8080/v1/models"
+
+
+def test_scribe_role_maps_to_scribe_alias():
+    """The scribe (super-ego) role is a first-class router role.
+
+    See a0_scribe plugin design: the scribe runs a local CPU model behind the
+    'scribe' role and must keep its own router alias rather than collapsing to
+    'chat'. The 'documentation' task type routes to the scribe role.
+    """
+    pytest.importorskip("pydantic")
+    from usr.plugins.a0_lmm_router.service.routing_intent import (
+        _role_from_task_type,
+        _router_alias_from_role,
+    )
+
+    # The scribe role keeps its own alias (case-insensitive).
+    assert _router_alias_from_role("scribe") == "scribe"
+    assert _router_alias_from_role("SCRIBE") == "scribe"
+
+    # The documentation task type routes to the scribe role.
+    assert _role_from_task_type("documentation") == "scribe"
+
+    # Existing roles are unaffected by the new branch.
+    assert _router_alias_from_role("chat") == "chat"
+    assert _router_alias_from_role("utility") == "utility"
+    assert _router_alias_from_role("embedding") == "embedding"
+    assert _router_alias_from_role(None) == "chat"
