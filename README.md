@@ -314,6 +314,14 @@ Keep `ROUTER_PARALLEL=1` for long Agent Zero conversations. llama.cpp divides
 `ROUTER_PARALLEL=4` gives each request only `n_ctx_slot=16384` and can fail with
 `request (...) exceeds the available context size (16384 tokens)`.
 
+For the Local Fleet preset, Agent Zero still has separate `chat` and `utility`
+roles, but utility calls are routed to the chat alias by default while keeping
+the smaller utility output budget. This prevents history compression from being
+sent to a separate 16K utility child server during a single serial chat. The
+`utility` alias in `models_preset.ini` also points at the chat GGUF with a
+131,072-token context as a direct-call fallback. Keep `ROUTER_MODELS_MAX` at 2
+or higher when you want separate chats or sub-agents to run in parallel.
+
 ### Backend selection
 
 Edit `conf/llama_cpp_servers.yaml`:
@@ -497,23 +505,22 @@ The GUI shows a PENDING badge for models with `pending_assignment: true` and dis
 Model paths and parameters are configured via environment variables in `usr/plugins/a0_lmm_router/docker/docker-compose.lmm.env`:
 
 ```env
-LMM_CHAT_MODEL=/models/chat/qwen3.5_9b/Qwen3.5-9B-Q4_K_M.gguf
-LMM_CHAT_CTX_SIZE=65536
-LMM_CHAT_N_PARALLEL=1
-LMM_CHAT_N_BATCH=512
-LMM_CHAT_FLASH_ATTN=1
+CHAT_MODEL_PATH=/models/unsloth--gemma-4-12B-it-GGUF/gemma-4-12b-it-Q4_K_M.gguf
+CHAT_CTX_SIZE=131072
+CHAT_PARALLEL=1
+CHAT_BATCH_SIZE=512
+CHAT_FLASH_ATTN=on
 
-LMM_UTILITY_MODEL=/models/utility/qwen3.5_9b/Qwen3.5-9B-Q4_K_M.gguf
-LMM_UTILITY_CTX_SIZE=16384
-LMM_UTILITY_N_PARALLEL=1
-LMM_UTILITY_N_BATCH=512
-LMM_UTILITY_FLASH_ATTN=1
+UTILITY_MODEL_PATH=/models/unsloth--gemma-4-12B-it-GGUF/gemma-4-12b-it-Q4_K_M.gguf
+UTILITY_CTX_SIZE=131072
+UTILITY_PARALLEL=1
+UTILITY_BATCH_SIZE=512
+UTILITY_FLASH_ATTN=on
+A0_LMM_UTILITY_FOLLOWS_CHAT=1
 
-LMM_EMBED_MODEL=/models/embed/nomic-embed-text-v1.5.Q4_K_M.gguf
-LMM_EMBED_CTX_SIZE=8192
-LMM_EMBED_N_PARALLEL=1
-LMM_EMBED_N_BATCH=512
-LMM_EMBED_FLASH_ATTN=0
+EMBED_MODEL_PATH=/models/embedding/nomic/nomic-embed-text-v1.5.Q4_K_M.gguf
+EMBED_CTX_SIZE=8192
+EMBED_BATCH_SIZE=512
 ```
 
 The `usr/plugins/a0_lmm_router/docker/docker-compose.lmm.yml` file references these variables for each service.
@@ -876,28 +883,31 @@ See `webui/dev-tracker.html` for the full live breakdown.
 
 ## Current Fleet (RTX 4090, 24GB VRAM)
 
-> Last updated: 2026-04-26 — Both slots use Qwen3.5-9B; Phi-4-14B removed (16K native limit, YaRN scaling unsupported by this GGUF).
-> Models use **dynamic KV cache allocation** (allocated only for tokens actually in the prompt), so large context windows are safe even with limited VRAM.
+> Last updated: 2026-06-10 - Local Fleet uses one long-context chat GGUF for
+> both Agent Zero chat and utility calls in a single serial chat. Router Mode
+> can still keep more than one child server for separate chats or parallel
+> sub-agents.
 
 | Slot | Model | Params | Weights (Q4_K_M) | Context | KV Cache (full) | Role |
 |------|-------|--------|------------------|---------|-----------------|------|
-| **chat** | Qwen3.5-9B | 9B dense | ~5.7 GB | **64K** | ~9 GB | Main agent reasoning |
-| **utility** | Qwen3.5-9B | 9B dense | ~5.7 GB | **16K** | ~2.3 GB | Sub-agents, wiki ops, tool calls |
-| **embed** | nomic-embed-text-v1.5 | — | ~0.5 GB | **8K** | ~0.4 GB | Embeddings |
+| **chat** | gemma-4-12b-it-Q4_K_M | 12B dense | GGUF-defined | **128K** | dynamic | Main agent reasoning |
+| **utility** | same as chat | 12B dense | shared file | **128K** | dynamic | Compression and utility calls, with utility output budget |
+| **embed** | nomic-embed-text-v1.5 | - | ~0.5 GB | **8K** | ~0.4 GB | Embeddings |
 
-**VRAM usage at typical load:**
-- qwen3.5-9B @ 64K context with ~32K prompt: ~5.7 GB weights + ~4.5 GB KV = ~10.2 GB
-- qwen3.5-9B @ 16K context with ~8K prompt: ~5.7 GB weights + ~1.1 GB KV = ~6.8 GB
-- nomic-embed @ 8K: ~0.5 GB weights + negligible KV
-- **Total active:** ~10.2 GB (only chat loaded) to ~17 GB (chat + utility loaded)
-
-**VRAM margin:** ~7 GB buffer on 24 GB card when all slots active.
+**Context impact:**
+- Utility prompt capacity increases from **16,384** to **131,072** tokens, an
+  **8x** larger hard window for compression and supporting calls.
+- The observed failing request was **65,845** tokens; it was **4.0x** larger
+  than the old 16K utility window but fits inside the new 128K hard window with
+  about **65K tokens** of hard-context headroom before response reserve.
+- Output stays bounded by the utility budget (`max_tokens` defaults to 768), so
+  routing utility to chat does not make utility calls generate chat-sized
+  responses.
 
 **Rationale for this configuration:**
-- **Phi-4-14B was removed** — its GGUF has a hard `n_ctx_train=16384` limit. Attempts to extend via `--rope-scaling yarn` + `--rope-scale 4.0` and `--override-kv` failed to change the server's reported `n_ctx`. The model simply rejected prompts >16K.
-- **Qwen3.5-9B** natively supports 262K context (`n_ctx_train=262144`), so 64K works without any tricks. Both slots share the same GGUF file on disk.
-- **Chat @ 64K** handles long Agent Zero conversations without truncation (was failing at 16K with 28K+ token prompts).
-- **Utility @ 16K** provides fast sub-agent/wiki operations while conserving VRAM when both slots are loaded simultaneously.
+- **Phi-4-14B was removed** because its GGUF has a hard `n_ctx_train=16384` limit.
+- **Chat and utility share the same local brain** for a single serial Agent Zero chat, avoiding a utility-only 16K choke point during history compression.
+- **Router Mode still supports child concurrency** through `ROUTER_MODELS_MAX` for separate chats and parallel sub-agents.
 - **Dynamic KV allocation** means VRAM is consumed proportionally to actual prompt length, not the full context window.
 - **Router aliases** (`chat`, `utility`, `embedding`) are the stable model IDs Agent Zero sends to the local Router Mode endpoint; swap the backing GGUF files in `models_preset.ini`.
 
@@ -905,10 +915,12 @@ See `webui/dev-tracker.html` for the full live breakdown.
 
 | Model | HuggingFace Repo | File |
 |-------|-----------------|------|
-| Qwen3.5-9B | `bartowski/Qwen3.5-9B-GGUF` | `Qwen3.5-9B-Q4_K_M.gguf` |
+| gemma-4-12b-it | `unsloth/gemma-4-12B-it-GGUF` | `gemma-4-12b-it-Q4_K_M.gguf` |
 | nomic-embed | (existing) | `nomic-embed-text-v1.5.Q4_K_M.gguf` |
 
-> **Note:** Both chat and utility slots use the **same** Qwen3.5-9B GGUF file (`models/utility/qwen3.5_9b/Qwen3.5-9B-Q4_K_M.gguf`). The file is loaded independently by each llama.cpp server process (no shared weights across containers on Windows Docker Desktop).
+> **Note:** Both chat and utility aliases use the **same** Gemma GGUF file. In a
+> single serial Agent Zero chat, utility-role calls route to the chat alias so
+> the same llama.cpp child server can keep the long-context conversation state.
 
 ---
 
@@ -920,9 +932,10 @@ This preserves the chat model's context window for reasoning and tool calls, whi
 
 ### How it works
 
-1. Main chat agent (Qwen3.5-9B @ 64K) detects a wiki-relevant query.
+1. Main chat agent (local fleet chat alias @ 128K) detects a wiki-relevant query.
 2. It invokes `call_subordinate` with `profile: "wiki_librarian"`.
-3. The sub-agent runs on the **utility slot** (Qwen3.5-9B, 16K context).
+3. The sub-agent uses the **utility role** but, by default, routes to the same
+   long-context chat alias while retaining the utility output budget.
 4. It queries the SharedBrain wikis, synthesizes a cited answer, and returns it.
 
 ### Sub-agent profile location

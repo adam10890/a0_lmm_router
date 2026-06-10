@@ -16,6 +16,10 @@ fleet:
   preferred_mode: router
   block_conflicting_mode: true
 
+local_fleet:
+  route_utility_to_chat_alias: true
+  utility_chat_alias: chat
+
 tool_exposure:
   enabled: true
   mode: local_fleet

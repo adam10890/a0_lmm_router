@@ -401,6 +401,24 @@ FLEET_ALIASES: tuple[tuple[str, str, str], ...] = (
 )
 
 
+def _truthy_env(env: Mapping[str, str], name: str, default: bool = False) -> bool:
+    raw = str(env.get(name, "") or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _router_models_max(env: Mapping[str, str]) -> int:
+    try:
+        return max(1, int(str(env.get("ROUTER_MODELS_MAX") or "2").strip()))
+    except ValueError:
+        return 2
+
+
+def _utility_follows_chat(env: Mapping[str, str]) -> bool:
+    return _truthy_env(env, "A0_LMM_UTILITY_FOLLOWS_CHAT", False)
+
+
 def warm_fleet_params(
     env: Mapping[str, str],
     *,
@@ -408,6 +426,12 @@ def warm_fleet_params(
     write_cache: bool = True,
 ) -> dict[str, Any]:
     """Plan (or load from cache) all fixed fleet slots; optionally persist cache."""
+    env = dict(env)
+    if _utility_follows_chat(env) and not str(env.get("UTILITY_CTX_SIZE") or "").strip():
+        chat_ctx = str(env.get("CHAT_CTX_SIZE") or "").strip()
+        if chat_ctx:
+            env["UTILITY_CTX_SIZE"] = chat_ctx
+
     available_vram_gb = available_vram_from_env(env)
     data = load_cache()
     entries: list[ContextPlan] = []
@@ -415,9 +439,14 @@ def warm_fleet_params(
     stats = {"cached": 0, "computed": 0, "seeded_from_last_success": 0}
     global_options_merged: dict[str, str] = _global_options_from_env(env)
 
+    serial_router = _router_models_max(env) <= 1
+    resident_model_paths: set[str] = set()
     resident_vram = 0.0
     for alias, role, model_var in FLEET_ALIASES:
-        container_model = (env.get(model_var) or "").strip()
+        effective_model_var = model_var
+        if alias == "utility" and _utility_follows_chat(env):
+            effective_model_var = "CHAT_MODEL_PATH"
+        container_model = (env.get(effective_model_var) or "").strip()
         if not container_model:
             continue
         plan, g_opts, p_opts, source = plan_model_with_cache(
@@ -426,7 +455,7 @@ def warm_fleet_params(
             container_model_path=container_model,
             env=env,
             available_vram_gb=available_vram_gb,
-            other_resident_vram_gb=resident_vram,
+            other_resident_vram_gb=0.0 if serial_router else resident_vram,
             force_refresh=force_refresh,
             cache=data,
         )
@@ -460,7 +489,13 @@ def warm_fleet_params(
             )
 
         if plan.planned_vram_gb:
-            resident_vram += float(plan.planned_vram_gb)
+            planned = float(plan.planned_vram_gb)
+            if serial_router:
+                if container_model not in resident_model_paths:
+                    resident_vram = max(resident_vram, planned)
+                    resident_model_paths.add(container_model)
+            else:
+                resident_vram += planned
 
     return {
         "ok": True,
@@ -470,6 +505,9 @@ def warm_fleet_params(
         "stats": stats,
         "cache_path": str(default_cache_path()),
         "hardware_fingerprint": _hardware_fingerprint(available_vram_gb),
+        "resident_vram_gb": round(resident_vram, 2),
+        "router_models_max": _router_models_max(env),
+        "utility_follows_chat": _utility_follows_chat(env),
     }
 
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -46,10 +47,11 @@ _MODEL_PROXY_FLAG = "_a0_lmm_tool_call_adapter_model_proxy"
 class _ModelCallAdapterProxy:
     """Proxy one model call so the final response can be normalized post-stream."""
 
-    def __init__(self, model: Any, agent: Any, role: str) -> None:
+    def __init__(self, model: Any, agent: Any, role: str, route_model_name: str | None = None) -> None:
         self._model = model
         self._agent = agent
         self._role = role
+        self._route_model_name = route_model_name
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._model, name)
@@ -62,7 +64,14 @@ class _ModelCallAdapterProxy:
                 config=_plugin_config(self._agent),
             )
             _record_output_budget(self._agent, decision)
-        response, reasoning = await self._model.unified_call(*args, **kwargs)
+        original_model_name = getattr(self._model, "model_name", None)
+        if self._route_model_name:
+            setattr(self._model, "model_name", self._route_model_name)
+        try:
+            response, reasoning = await self._model.unified_call(*args, **kwargs)
+        finally:
+            if self._route_model_name and original_model_name is not None:
+                setattr(self._model, "model_name", original_model_name)
         adapted = adapt_final_model_response(
             response,
             allowed_tools=DEFAULT_WIKI_TOOL_ALLOWLIST,
@@ -95,7 +104,12 @@ def wrap_model_call(agent: Any, call_data: dict[str, Any] | None, *, role: str =
     if not should_enable_tool_call_adapter(agent) and not should_apply_to_model(model):
         return
 
-    call_data["model"] = _ModelCallAdapterProxy(model, agent, role)
+    call_data["model"] = _ModelCallAdapterProxy(
+        model,
+        agent,
+        role,
+        route_model_name=_utility_chat_route_model_name(agent, model, role),
+    )
     call_data[_MODEL_PROXY_FLAG] = True
 
 
@@ -166,6 +180,46 @@ def _plugin_config(agent: Any) -> dict[str, Any]:
         return config if isinstance(config, dict) else {}
     except Exception:
         return {}
+
+
+def _env_bool(name: str) -> bool | None:
+    raw = os.environ.get(name)
+    if raw is None:
+        return None
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def _utility_chat_route_model_name(agent: Any, model: Any, role: str) -> str | None:
+    if str(role or "").lower() != "utility":
+        return None
+    model_name = str(getattr(model, "model_name", "") or "")
+    if not model_name.lower().startswith("lmm_router/"):
+        return None
+
+    config = _plugin_config(agent)
+    local_fleet = config.get("local_fleet") if isinstance(config, dict) else {}
+    if not isinstance(local_fleet, dict):
+        local_fleet = {}
+
+    env_override = _env_bool("A0_LMM_UTILITY_FOLLOWS_CHAT")
+    enabled = (
+        env_override
+        if env_override is not None
+        else bool(local_fleet.get("route_utility_to_chat_alias", True))
+    )
+    if not enabled:
+        return None
+
+    chat_alias = str(local_fleet.get("utility_chat_alias") or "chat").strip() or "chat"
+    provider, _, current_alias = model_name.partition("/")
+    if current_alias == chat_alias:
+        return None
+    return f"{provider}/{chat_alias}"
 
 
 def _record_output_budget(agent: Any, decision: Any) -> None:

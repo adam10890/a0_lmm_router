@@ -287,3 +287,59 @@ def test_model_proxy_injects_local_fleet_output_budget(monkeypatch):
 
     assert response == "ok"
     assert call_data["model"]._model.kwargs["max_tokens"] == 2048
+
+
+def test_utility_proxy_can_route_to_chat_alias_without_losing_utility_budget(monkeypatch):
+    import importlib
+
+    runtime_module = importlib.import_module("tool_call_adapter_runtime")
+    monkeypatch.setattr(runtime_module, "should_enable_tool_call_adapter", lambda agent: False)
+    monkeypatch.setattr(
+        runtime_module,
+        "_plugin_config",
+        lambda agent: {
+            "local_fleet": {
+                "route_utility_to_chat_alias": True,
+                "utility_chat_alias": "chat",
+            }
+        },
+    )
+
+    class FakeLog:
+        def log(self, **kwargs):
+            pass
+
+    class FakeContext:
+        log = FakeLog()
+
+    class FakeAgent:
+        context = FakeContext()
+
+        def set_data(self, key, value):
+            self.telemetry = (key, value)
+
+    class FakeModelConfig:
+        provider = "lmm_router"
+        api_base = "http://host.docker.internal:8080/v1"
+
+    class FakeModel:
+        model_name = "lmm_router/utility"
+        a0_model_conf = FakeModelConfig()
+
+        async def unified_call(self, *args, **kwargs):
+            self.seen_model_name = self.model_name
+            self.kwargs = kwargs
+            return "ok", ""
+
+    model = FakeModel()
+    call_data = {"model": model}
+    runtime_module.prepare_local_fleet_call_data(FakeAgent(), call_data, role="utility")
+
+    import asyncio
+
+    response, _ = asyncio.run(call_data["model"].unified_call())
+
+    assert response == "ok"
+    assert model.seen_model_name == "lmm_router/chat"
+    assert model.model_name == "lmm_router/utility"
+    assert call_data["model"]._model.kwargs["max_tokens"] == 768

@@ -11,6 +11,7 @@ if str(HELPERS_ROOT) not in sys.path:
     sys.path.insert(0, str(HELPERS_ROOT))
 
 from model_params_cache import (  # noqa: E402
+    ContextPlan,
     get_cached_entry,
     load_cache,
     model_cache_key,
@@ -118,3 +119,59 @@ def test_warm_fleet_stats_keys(tmp_path, monkeypatch):
     assert len(warm["entries"]) == 3
     data = load_cache(cache_path)
     assert data.get("models")
+
+
+def test_utility_can_follow_chat_without_duplicate_resident_vram(tmp_path, monkeypatch):
+    cache_path = tmp_path / "cache.json"
+    monkeypatch.setattr("model_params_cache.default_cache_path", lambda: cache_path)
+    monkeypatch.setattr(
+        "model_params_cache.read_gguf_metadata",
+        lambda _p: dict(_META),
+    )
+    monkeypatch.setattr(
+        "model_params_cache._file_fingerprint",
+        lambda _p: {"exists": True, "size": 100, "mtime_ns": 1, **_META},
+    )
+    monkeypatch.setattr(
+        "model_params_cache.container_path_to_host",
+        lambda c, _d: "C:/models/chat/test.gguf" if c.endswith(".gguf") else c,
+    )
+    monkeypatch.setattr(
+        "model_params_cache.plan_model_context",
+        lambda **kwargs: ContextPlan(
+            alias=str(kwargs["alias"]),
+            role=str(kwargs["role"]),
+            model_path=str(kwargs["model_path"]),
+            min_ctx=int(kwargs["min_ctx"]),
+            hard_ctx=65536,
+            effective_ctx=45875,
+            response_reserve=int(kwargs["response_reserve"]),
+            effective_ratio=float(kwargs["effective_ratio"]),
+            n_ctx_train=131072,
+            planned_vram_gb=10.0,
+            kv_cache_gb=4.0,
+            no_capacity=False,
+            reason="test planner",
+        ),
+    )
+
+    env = {
+        "LLAMA_MODELS_DIR": "C:/models",
+        "CHAT_MODEL_PATH": "/models/chat/test.gguf",
+        "UTILITY_MODEL_PATH": "/models/chat/test.gguf",
+        "EMBED_MODEL_PATH": "",
+        "CHAT_CTX_SIZE": "65536",
+        "UTILITY_CTX_SIZE": "65536",
+        "ROUTER_MODELS_MAX": "1",
+        "ROUTER_PARALLEL": "1",
+        "A0_LMM_UTILITY_FOLLOWS_CHAT": "1",
+        "A0_LMM_AVAILABLE_VRAM_GB": "24",
+    }
+
+    warm = warm_fleet_params(env, force_refresh=True, write_cache=False)
+    by_alias = {entry.alias: entry for entry in warm["entries"]}
+
+    assert by_alias["chat"].model_path == "/models/chat/test.gguf"
+    assert by_alias["utility"].model_path == "/models/chat/test.gguf"
+    assert by_alias["utility"].hard_ctx == by_alias["chat"].hard_ctx
+    assert warm["resident_vram_gb"] == by_alias["chat"].planned_vram_gb
