@@ -154,6 +154,17 @@ function createDashboardStore() {
     toasts: [],
     _toastSeq: 0,
 
+    fitSummary: {
+      mode: 'read_only',
+      hardware: {},
+      slots: [],
+      risk_notes: [],
+      recommendations: [],
+      warnings: [],
+      data_sources: {},
+    },
+    fitSummaryError: '',
+
     // Fleet ignition state
     igniteState: 'idle',      // idle | pending | ok | needs_host | error
     igniteMessage: '',

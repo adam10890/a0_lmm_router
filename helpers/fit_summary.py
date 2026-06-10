@@ -75,7 +75,7 @@ def _slot_fit(slot: Dict[str, Any], hardware_known: bool) -> tuple[str, List[str
         return "poor", risk_notes, recommendations
 
     if running and healthy:
-        risk_notes.append("Slot is running and healthy according to existing observer data.")
+        risk_notes.append("Slot is running and healthy according to existing telemetry data.")
         return "good", risk_notes, recommendations
 
     if running and not healthy:
@@ -126,16 +126,16 @@ def build_fit_summary(snapshot: Dict[str, Any] | None) -> Dict[str, Any]:
     warnings: List[str] = []
     recommendations: List[str] = []
     risk_notes: List[str] = [
-        "Read-only summary: no model lifecycle, host-control, credential, or shell actions are exposed.",
-        "Fit status is a phase-1 heuristic based only on existing compute/slot observer data.",
+        "Read-only summary: no model lifecycle, host-control, credential, or command actions are exposed.",
+        "Fit status is a phase-1 heuristic based only on existing compute/slot telemetry data.",
     ]
 
     if not hardware_known:
         warnings.append("Hardware inventory is unknown or incomplete; per-slot fit_status may remain unknown.")
         recommendations.append("Future phase: add a safe read-only host hardware detector with explicit data-source labeling.")
     if not slots:
-        warnings.append("No slot data available from the existing compute monitor.")
-        recommendations.append("Verify llama_cpp_servers.yaml and existing fleet observer endpoints.")
+        warnings.append("No slot data available")
+        recommendations.append("Verify the llama.cpp fleet config and existing fleet telemetry endpoints.")
     if any(slot["fit_status"] in ("poor", "caution") for slot in slots):
         recommendations.append("Review caution/poor slots before changing routing defaults.")
 

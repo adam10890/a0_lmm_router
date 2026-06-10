@@ -11,7 +11,7 @@ from typing import Any, TYPE_CHECKING
 try:
     from helpers.api import ApiHandler
 except ModuleNotFoundError as exc:  # pragma: no cover - minimal test venv without Flask
-    if exc.name != "flask":
+    if exc.name not in {"flask", "helpers.api"}:
         raise
 
     class ApiHandler:  # type: ignore[no-redef]
@@ -47,7 +47,7 @@ class LmmFitSummary(ApiHandler):
                     "cpu_load_pct": None,
                 },
                 "slots": [],
-                "risk_notes": ["Read-only summary failed before producing observer data."],
+                "risk_notes": ["Read-only summary failed before producing telemetry data."],
                 "recommendations": ["Check existing compute monitor configuration and plugin imports."],
                 "warnings": ["Fit summary unavailable."],
                 "data_sources": {"hardware": "unknown", "slots": "unknown", "fleet_mode": "unknown"},
