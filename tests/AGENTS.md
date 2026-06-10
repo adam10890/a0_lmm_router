@@ -13,6 +13,11 @@ dashboard wiring, and helper logic.
 ## Local Contracts
 
 - Add focused tests for changed routing, context, exposure, or config policy.
+- Tests touching `helpers/router_context.py` context resolution must stub
+  `fetch_router_model_ctx` and `read_slot_context_size` (see the
+  `offline_ctx_sources` fixture in `test_router_context_guard.py`); otherwise
+  a live Router Mode fleet or a leaked BackendManager singleton overrides the
+  test's `ctx_length` and the assertions become environment-dependent.
 
 ## Work Guidance
 
