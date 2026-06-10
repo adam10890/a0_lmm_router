@@ -103,6 +103,28 @@ services:
       - "${ROUTER_UBATCH_SIZE:-1024}"
       - "--metrics"
 
+  # Internal GPU stats for the A0 dashboard when host helper is offline.
+  # Not published to the host — only reachable on a0-lmm-net.
+  a0-lmm-gpu-stats:
+    image: nvidia/cuda:12.6.0-base-ubuntu22.04
+    container_name: a0-lmm-gpu-stats
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - type: bind
+        source: ../tools/gpu_stats_sidecar.pl
+        target: /app/gpu_stats_sidecar.pl
+        read_only: true
+    command: ["perl", "/app/gpu_stats_sidecar.pl", "--host", "0.0.0.0", "--port", "55502"]
+    networks:
+      - a0-lmm-net
+
 networks:
   a0-lmm-net:
     name: a0-lmm-net

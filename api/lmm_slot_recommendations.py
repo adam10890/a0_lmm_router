@@ -82,7 +82,8 @@ class LmmSlotRecommendations(ApiHandler):
             installed_diagnostics = None
             if not installed_models:
                 installed_diagnostics = {
-                    "host_reachable": not models_payload.get("_router_unreachable"),
+                    "host_reachable": not models_payload.get("_router_unreachable")
+                    and not models_payload.get("host_helper_unreachable"),
                     "scanned_dir": models_payload.get("models_dir", ""),
                     "message": models_payload.get(
                         "message",
@@ -90,6 +91,12 @@ class LmmSlotRecommendations(ApiHandler):
                         "Verify LLAMA_MODELS_DIR on the host and that .gguf "
                         "files exist there.",
                     ),
+                }
+            elif models_payload.get("host_helper_unreachable"):
+                installed_diagnostics = {
+                    "host_reachable": False,
+                    "source": models_payload.get("source", "router_http"),
+                    "message": models_payload.get("message", ""),
                 }
 
             # 4. Slot suggestions

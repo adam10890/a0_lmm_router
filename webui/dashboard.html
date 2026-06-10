@@ -147,6 +147,14 @@
         .slot-fit-badge.fit-undersized { background:#f9e2af20; color:var(--warn); border:1px solid #f9e2af40; }
         .slot-fit-badge.fit-oversized  { background:#f38ba820; color:var(--err);  border:1px solid #f38ba840; }
         .slot-fit-badge.fit-empty      { background:transparent; color:var(--muted); border:1px solid var(--border); }
+        .fit-summary-table { width:100%; border-collapse:collapse; font-size:.74rem; margin-top:8px; }
+        .fit-summary-table th, .fit-summary-table td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); }
+        .fit-summary-table th { color:var(--muted); text-transform:uppercase; letter-spacing:.06em; font-size:.62rem; }
+        .fit-status-good { color:var(--ok); font-weight:700; }
+        .fit-status-caution { color:var(--warn); font-weight:700; }
+        .fit-status-poor { color:var(--err); font-weight:700; }
+        .fit-status-unknown { color:var(--muted); font-weight:700; }
+        .fit-summary-list { margin:8px 0 0 18px; color:var(--soft); font-size:.74rem; line-height:1.45; }
         .slot-suggested-row { display:flex; align-items:center; gap:10px; padding:5px 0; border-top:1px dashed var(--border); }
         .slot-suggested-row:first-of-type { border-top:0; }
         .ssr-info { display:flex; align-items:center; gap:6px; flex-wrap:wrap; flex:1; min-width:0; }
@@ -261,6 +269,22 @@
         .fleet-mode-idle, .fleet-mode-unknown { color:var(--muted); }
         .fleet-mode-note { color:var(--soft); font-size:.74rem; line-height:1.45; max-width:52rem; }
         .fleet-mode-actions { display:flex; gap:6px; flex-wrap:wrap; align-items:center; flex-shrink:0; }
+        .mcp-bar {
+          display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
+          margin:0 0 14px; padding:10px 14px; border-radius:10px;
+          border:1px solid #a6e3a130; background:linear-gradient(135deg,#a6e3a108,#cba6f706);
+        }
+        .mcp-bar-main { display:flex; align-items:center; gap:10px; flex-wrap:wrap; min-width:0; }
+        .mcp-bar-label { color:var(--muted); text-transform:uppercase; letter-spacing:.08em; font-weight:700; font-size:.68rem; }
+        .mcp-chip {
+          font-family:'SF Mono','Menlo','Consolas',monospace; font-size:.78rem; font-weight:700;
+          padding:3px 10px; border-radius:999px; border:1px solid;
+        }
+        .mcp-chip--live { color:var(--ok); border-color:#a6e3a160; background:#a6e3a118; }
+        .mcp-chip--stopped { color:var(--warn); border-color:#f9e2af60; background:#f9e2af12; }
+        .mcp-chip--disabled { color:var(--muted); border-color:var(--border); background:transparent; }
+        .mcp-bar-note { color:var(--soft); font-size:.7rem; max-width:36rem; line-height:1.4; }
+        .mcp-bar-actions { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
 
         /* Role bindings — card layout */
         .role-bindings-grid { display:flex; flex-direction:column; gap:10px; }
@@ -493,6 +517,41 @@
           </div>
         </div>
 
+        <!-- ─── MCP Server (Agent Zero bridge) ───────────────── -->
+        <div class="mcp-bar">
+          <div class="mcp-bar-main">
+            <span class="mcp-bar-label">MCP Server</span>
+            <span class="mcp-chip" :class="mcpStatusClass()" x-text="mcpStatusLabel()"></span>
+            <template x-if="mcp.running && mcp.a0_settings_url">
+              <span class="mcp-bar-note" :title="mcp.a0_settings_url">
+                A0 Settings URL: <code x-text="mcp.a0_settings_url"></code>
+              </span>
+            </template>
+            <template x-if="!mcp.running && mcp.enabled">
+              <span class="mcp-bar-note">Exposes fleet tools to Agent Zero via Settings → MCP Servers JSON</span>
+            </template>
+            <template x-if="mcp.error">
+              <span class="mcp-bar-note" style="color:var(--err)" x-text="mcp.error"></span>
+            </template>
+          </div>
+          <div class="mcp-bar-actions">
+            <button class="btn btn-ghost" type="button" @click="_fetchMcpStatus()"
+                    :disabled="mcp.loading || mcp.actionPending" title="Refresh MCP status">↻</button>
+            <template x-if="mcp.enabled && !mcp.running">
+              <button class="btn btn-accent" type="button" @click="mcpAction('start')"
+                      :disabled="mcp.actionPending"
+                      x-text="mcp.actionPending ? 'Starting…' : '▶ Start MCP'"></button>
+            </template>
+            <template x-if="mcp.running">
+              <button class="btn btn-cancel" type="button" @click="mcpAction('stop')"
+                      :disabled="mcp.actionPending"
+                      x-text="mcp.actionPending ? 'Stopping…' : '⏹ Stop MCP'"></button>
+              <button class="btn btn-ghost" type="button" @click="mcpAction('restart')"
+                      :disabled="mcp.actionPending">↻ Restart</button>
+            </template>
+          </div>
+        </div>
+
         <!-- ─── Role Bindings (priority) ─────────────────────── -->
         <div class="section">
           <div class="section-head">
@@ -634,6 +693,9 @@
                     x-text="'Tier ' + liveTier.tier"></span>
             </template>
             <div class="section-meta" x-text="hasGPU ? (gpus.length + ' GPU' + (gpus.length===1?'':'s')) : 'CPU only'"></div>
+            <template x-if="hasGPU && gpuSource === 'fleet_sidecar'">
+              <span class="role-chip source-live" title="Host helper offline; GPU via a0-lmm-gpu-stats sidecar">gpu: fleet sidecar</span>
+            </template>
           </div>
           <div class="section-body">
             <div class="compute-grid">
@@ -673,6 +735,9 @@
                     <span class="compute-badge badge-warn">unavailable</span>
                   </div>
                   <div style="font-size:.78rem;color:var(--muted)">No GPU detected (nvidia-smi unavailable)</div>
+                  <template x-if="gpuSource === 'fleet_sidecar'">
+                    <div style="font-size:.68rem;color:var(--warn);margin-top:4px">Sidecar reachable but returned no GPUs — check a0-lmm-gpu-stats logs.</div>
+                  </template>
                 </div>
               </template>
 
@@ -698,6 +763,24 @@
               </div>
 
             </div>
+          </div>
+        </div>
+
+        <!-- ─── Read-only Hardware / Model Fit Summary ───────── -->
+        <div class="section">
+          <div class="section-head">
+            <div class="section-title">Hardware / Model Fit Summary</div>
+            <span class="role-chip source-live">Read-only mode</span>
+            <div class="section-meta" x-text="(fitSummary.slots || []).length + ' slots'"></div>
+          </div>
+          <div class="section-body">
+            <template x-if="fitSummaryError"><div class="lmm-msg warn" x-text="fitSummaryError"></div></template>
+            <div class="compute-grid">
+              <div class="compute-card"><div class="compute-card-hdr"><span class="compute-card-title">Hardware summary</span><span class="compute-badge badge-info" x-text="fitSummary.hardware?.gpu_source || 'unknown'"></span></div><div class="stat-row"><span class="stat-key">GPU</span><span class="stat-val" x-text="fitSummary.hardware?.gpu_summary || 'unknown'"></span></div><div class="stat-row"><span class="stat-key">RAM</span><span class="stat-val" x-text="fitSummary.hardware?.ram_total_mb ? fmtMB(fitSummary.hardware.ram_total_mb) : 'unknown'"></span></div></div>
+              <div class="compute-card"><div class="compute-card-hdr"><span class="compute-card-title">Recommendations</span></div><template x-if="!(fitSummary.recommendations || []).length"><div class="empty-state">No fit recommendations yet.</div></template><ul class="fit-summary-list" x-show="(fitSummary.recommendations || []).length"><template x-for="rec in fitSummary.recommendations" :key="rec"><li x-text="rec"></li></template></ul></div>
+              <div class="compute-card"><div class="compute-card-hdr"><span class="compute-card-title">Warnings</span></div><template x-if="!(fitSummary.warnings || []).length"><div class="empty-state">No warnings.</div></template><ul class="fit-summary-list" x-show="(fitSummary.warnings || []).length"><template x-for="warn in fitSummary.warnings" :key="warn"><li x-text="warn"></li></template></ul></div>
+            </div>
+            <table class="fit-summary-table"><thead><tr><th>Slot</th><th>Role</th><th>Model</th><th>Backend</th><th>Context</th><th>Enabled</th><th>Fit</th></tr></thead><tbody><template x-for="slot in fitSummary.slots" :key="slot.slot_id"><tr><td x-text="slot.slot_id"></td><td x-text="slot.role || '—'"></td><td x-text="slot.model_id || '—'"></td><td x-text="slot.backend_type || 'unknown'"></td><td x-text="slot.context_size || 'unknown'"></td><td x-text="slot.enabled ? 'yes' : 'no'"></td><td :class="'fit-status-' + (slot.fit_status || 'unknown')" x-text="slot.fit_status || 'unknown'"></td></tr></template></tbody></table>
           </div>
         </div>
 
@@ -961,6 +1044,12 @@
           <div class="section-body">
             <template x-if="Object.keys(installedModels).length === 0">
               <div class="empty-state">No models installed yet. Use the HuggingFace download form below to install models.</div>
+            </template>
+            <template x-if="Object.keys(installedModels).length > 0 && installedDiag && !installedDiag.host_reachable">
+              <div class="lmm-msg warn" style="margin-bottom:8px; font-size:.72rem;">
+                <b>Host helper offline</b> — model list from live router HTTP.
+                <span x-text="installedDiag.message || ''"></span>
+              </div>
             </template>
             <div class="model-cards-grid">
               <template x-for="[mid, m] in Object.entries(installedModels)" :key="mid">

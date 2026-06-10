@@ -37,6 +37,10 @@ _HOST_HOST_ENV = "A0_LMM_HOST_HOST"
 _HOST_PORT_ENV = "A0_LMM_HOST_PORT"
 _HOST_DEFAULT_PORT = 55501
 _HOST_TOKEN_CANDIDATES = ("/host/a0_lmm_host.key", "/a0/tmp/lmm_host_token")
+_FLEET_GPU_STATS_URL = os.environ.get(
+    "A0_LMM_FLEET_GPU_STATS_URL", "http://a0-lmm-gpu-stats:55502"
+)
+_DEBUG_LOG = "/a0/usr/plugins/a0_lmm_router/data/debug-e401df.log"
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -112,6 +116,44 @@ def _resolve_host_url() -> str:
     host = os.environ.get(_HOST_HOST_ENV, "host.docker.internal").strip()
     port = os.environ.get(_HOST_PORT_ENV, str(_HOST_DEFAULT_PORT)).strip()
     return f"http://{host}:{port}"
+
+
+def _dbg_gpu(hypothesis_id: str, location: str, message: str, data: dict | None = None) -> None:
+    # #region agent log
+    try:
+        payload = {
+            "sessionId": "e401df",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data or {},
+            "timestamp": int(time.time() * 1000),
+        }
+        with open(_DEBUG_LOG, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
+
+
+def _parse_gpu_payload(payload: dict) -> List[GPUStats]:
+    gpus: List[GPUStats] = []
+    if not payload.get("ok"):
+        return gpus
+    for g in payload.get("gpus", []) or []:
+        try:
+            gpus.append(GPUStats(
+                id=int(g["id"]),
+                name=str(g["name"]),
+                total_vram_mb=int(g["total_vram_mb"]),
+                used_vram_mb=int(g["used_vram_mb"]),
+                free_vram_mb=int(g["free_vram_mb"]),
+                utilization_pct=int(g["utilization_pct"]),
+                temperature_c=int(g["temperature_c"]),
+            ))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return gpus
 
 
 def _query_gpus_local() -> List[GPUStats]:
@@ -191,29 +233,58 @@ def _query_gpus_via_host(timeout: float = 3.0) -> List[GPUStats]:
         logger.debug("Host helper GPU error: %s", payload.get("error"))
         return []
 
-    gpus: List[GPUStats] = []
-    for g in payload.get("gpus", []) or []:
-        try:
-            gpus.append(GPUStats(
-                id=int(g["id"]),
-                name=str(g["name"]),
-                total_vram_mb=int(g["total_vram_mb"]),
-                used_vram_mb=int(g["used_vram_mb"]),
-                free_vram_mb=int(g["free_vram_mb"]),
-                utilization_pct=int(g["utilization_pct"]),
-                temperature_c=int(g["temperature_c"]),
-            ))
-        except (KeyError, TypeError, ValueError):
-            continue
+    gpus = _parse_gpu_payload(payload)
+    if gpus:
+        _dbg_gpu("GPU", "compute_monitor.py:_query_gpus_via_host", "host helper gpu ok", {"count": len(gpus)})
+    return gpus
+
+
+def _query_gpus_via_fleet_sidecar(timeout: float = 2.5) -> List[GPUStats]:
+    """Fallback #2: fleet GPU sidecar on a0-lmm-net (works when host helper is down)."""
+    base = _FLEET_GPU_STATS_URL.rstrip("/")
+    url = f"{base}/gpu-stats"
+    try:
+        req = urllib.request.Request(url, method="GET", headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            body = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.URLError as exc:
+        _dbg_gpu("GPU", "compute_monitor.py:_query_gpus_via_fleet_sidecar", "sidecar unreachable", {"url": url, "error": str(exc.reason)})
+        logger.debug("Fleet GPU sidecar unreachable: %s", exc)
+        return []
+    except Exception as exc:
+        _dbg_gpu("GPU", "compute_monitor.py:_query_gpus_via_fleet_sidecar", "sidecar error", {"url": url, "error": str(exc)})
+        logger.debug("Fleet GPU sidecar error: %s", exc)
+        return []
+
+    try:
+        payload = json.loads(body)
+    except Exception:
+        logger.debug("Fleet GPU sidecar returned non-JSON: %r", body[:200])
+        return []
+
+    gpus = _parse_gpu_payload(payload)
+    if gpus:
+        _dbg_gpu("GPU", "compute_monitor.py:_query_gpus_via_fleet_sidecar", "sidecar gpu ok", {"count": len(gpus), "source": payload.get("source")})
     return gpus
 
 
 def _query_gpus() -> List[GPUStats]:
-    """Query GPU stats: try local nvidia-smi, then fall back to host helper."""
+    """Query GPU stats: local nvidia-smi → host helper → fleet sidecar."""
+    gpus, _src = _query_gpus_with_source()
+    return gpus
+
+
+def _query_gpus_with_source() -> tuple[List[GPUStats], str]:
     gpus = _query_gpus_local()
     if gpus:
-        return gpus
-    return _query_gpus_via_host()
+        return gpus, "local"
+    gpus = _query_gpus_via_host()
+    if gpus:
+        return gpus, "host_helper"
+    gpus = _query_gpus_via_fleet_sidecar()
+    if gpus:
+        return gpus, "fleet_sidecar"
+    return [], "none"
 
 
 # ---------------------------------------------------------------------------
@@ -425,15 +496,17 @@ def _derive_fleet_mode_from_slots(fleet_mode: Dict[str, Any], slots: List[SlotIn
 def get_compute_snapshot() -> Dict[str, Any]:
     """Return a serialisable dict with current compute + LMM stats."""
     slots = _query_slots()
+    gpus, gpu_source = _query_gpus_with_source()
     snap = ComputeSnapshot(
         ts=time.time(),
-        gpus=_query_gpus(),
+        gpus=gpus,
         cpu=_query_cpu(),
         slots=slots,
     )
     return {
         "ts": snap.ts,
         "gpus": [asdict(g) for g in snap.gpus],
+        "gpu_source": gpu_source,
         "cpu": asdict(snap.cpu),
         "slots": [asdict(s) for s in snap.slots],
         "fleet_mode": _derive_fleet_mode_from_slots(detect_fleet_mode(), snap.slots),

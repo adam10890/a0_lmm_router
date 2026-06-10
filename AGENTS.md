@@ -82,5 +82,18 @@ plane.
 
 ## Child DOX Index
 
-No child AGENTS.md files yet. Add child docs for `service/` or `mcp_server/`
-once those areas gain independent release gates.
+- `helpers/AGENTS.md` — backend orchestration, config resolution, routing,
+  model fit, budget, exposure, and monitoring helpers.
+- `service/AGENTS.md` — standalone OpenAI-compatible provider and Fleet Manager
+  service boundary.
+- `mcp_server/AGENTS.md` — MCP tools/resources and router bridge.
+- `api/AGENTS.md` — Agent Zero Web/API wrappers.
+- `webui/AGENTS.md` — dashboard and local fleet UI.
+- `extensions/AGENTS.md` — Agent Zero hook integration.
+- `conf/AGENTS.md` — router, fleet, model provider, and preset configuration.
+- `docker/AGENTS.md` — compose files and container runtime helpers.
+- `scripts/AGENTS.md` — operator scripts and provider smoke helpers.
+- `tests/AGENTS.md` — routing, MCP, UI, config, and helper tests.
+- `docs/AGENTS.md` — runbooks and durable architecture notes.
+- `tools/AGENTS.md` — Agent Zero tool wrappers.
+- `skills/AGENTS.md` — local fleet task-routing skill guidance.

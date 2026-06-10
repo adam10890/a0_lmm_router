@@ -39,6 +39,26 @@ def _read_token() -> str:
     return ""
 
 
+def _debug_log(hypothesis_id: str, location: str, message: str, data: Optional[dict] = None) -> None:
+    # #region agent log
+    import time
+    try:
+        log_path = "/a0/usr/plugins/a0_lmm_router/data/debug-e401df.log"
+        payload = {
+            "sessionId": "e401df",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data or {},
+            "timestamp": int(time.time() * 1000),
+        }
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
+
+
 def _helper_request(method: str, path: str, body: Optional[dict] = None, timeout: int = 30) -> dict:
     """Send an HTTP request to the host helper, return parsed JSON."""
     token = _read_token()
@@ -49,27 +69,193 @@ def _helper_request(method: str, path: str, body: Optional[dict] = None, timeout
     req.add_header("Content-Type", "application/json")
     req.add_header("X-Token", token)
 
+    _debug_log(
+        "H1-H2",
+        "fleet_models.py:_helper_request",
+        "host helper request",
+        {"method": method, "url": url, "has_token": bool(token), "path": path},
+    )
+
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            parsed = json.loads(resp.read().decode("utf-8"))
+            models = parsed.get("models") if isinstance(parsed, dict) else None
+            model_count = len(models) if isinstance(models, (dict, list)) else 0
+            _debug_log(
+                "H2-H3",
+                "fleet_models.py:_helper_request",
+                "host helper response",
+                {"path": path, "ok": parsed.get("ok") if isinstance(parsed, dict) else None, "model_count": model_count},
+            )
+            return parsed
     except urllib.error.HTTPError as e:
         try:
-            return json.loads(e.read().decode("utf-8"))
+            parsed = json.loads(e.read().decode("utf-8"))
+            _debug_log("H1", "fleet_models.py:_helper_request", "HTTP error", {"path": path, "code": e.code, "body_ok": parsed.get("ok")})
+            return parsed
         except Exception:
+            _debug_log("H1", "fleet_models.py:_helper_request", "HTTP error unreadable", {"path": path, "code": e.code})
             return {"ok": False, "error": f"HTTP {e.code}", "_router_unreachable": True}
     except urllib.error.URLError as e:
+        _debug_log("H1", "fleet_models.py:_helper_request", "URL error", {"path": path, "reason": str(e.reason)})
         return {"ok": False, "error": str(e.reason), "_router_unreachable": True}
     except Exception as e:
+        _debug_log("H1", "fleet_models.py:_helper_request", "request exception", {"path": path, "error": str(e)})
         return {"ok": False, "error": str(e), "_router_unreachable": True}
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# HTTP fleet fallback (when host helper is down)
 # ---------------------------------------------------------------------------
 
+def _read_lmm_hosts() -> dict:
+    try:
+        import yaml
+        from usr.plugins.a0_lmm_router.helpers.conf_resolver import resolve_conf_path
+    except ImportError:
+        import yaml
+        from conf_resolver import resolve_conf_path
+    try:
+        with open(resolve_conf_path(__file__), "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        return (data.get("global", {}) or {}).get("lmm_hosts", {}) or {}
+    except Exception:
+        return {}
+
+
+def _model_path_from_status(status: dict) -> str:
+    args = status.get("args") if isinstance(status, dict) else None
+    if not isinstance(args, list):
+        return ""
+    for idx, arg in enumerate(args):
+        if arg == "--model" and idx + 1 < len(args):
+            return str(args[idx + 1])
+    return ""
+
+
+def _entry_from_v1_model(item: dict, *, role_hint: str = "") -> tuple[str, dict]:
+    alias = str(item.get("id") or item.get("alias") or "")
+    status = item.get("status") if isinstance(item.get("status"), dict) else {}
+    model_path = _model_path_from_status(status)
+    meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+
+    file_name = Path(model_path).name if model_path else f"{alias}.gguf"
+    rel_parent = ""
+    if model_path.startswith("/models/"):
+        rel = model_path[len("/models/"):]
+        rel_parent = str(Path(rel).parent) if "/" in rel else ""
+
+    stem = Path(file_name).stem if file_name else alias
+    model_id = stem or alias
+
+    size_bytes = meta.get("size") or 0
+    try:
+        size_gb = round(int(size_bytes) / (1024 ** 3), 2)
+    except (TypeError, ValueError):
+        size_gb = 0.0
+
+    hint = role_hint or alias
+    if hint not in ("chat", "utility", "embedding", "vision", "reasoning"):
+        hint = "utility"
+
+    loaded = str(status.get("value") or "").lower() == "loaded"
+
+    return model_id, {
+        "file": file_name,
+        "path": rel_parent,
+        "repo_id": "router",
+        "size_gb": size_gb,
+        "role_hint": hint,
+        "model_path": model_path,
+        "n_ctx_train": meta.get("n_ctx_train"),
+        "n_layer": meta.get("n_layer"),
+        "n_embd": meta.get("n_embd"),
+        "assigned_slot": alias,
+        "loaded": loaded,
+        "source": "router_http",
+    }
+
+
+def _list_models_from_http_fleet() -> dict:
+    """Build installed-models map from live llama.cpp HTTP /v1/models."""
+    try:
+        from usr.plugins.a0_lmm_router.helpers.router_probe import detect_fleet_http, _http_get_json
+    except ImportError:
+        from router_probe import detect_fleet_http, _http_get_json
+
+    lmm_hosts = _read_lmm_hosts()
+    detected = detect_fleet_http(lmm_hosts or None)
+    models: dict = {}
+
+    if detected.get("mode") == "router":
+        router = detected.get("router") or {}
+        host = str(router.get("host") or "host.docker.internal")
+        port = int(router.get("port") or detected.get("primary_port") or 8080)
+        payload = _http_get_json(f"http://{host}:{port}/v1/models")
+        if isinstance(payload, dict):
+            for item in payload.get("data", []) or []:
+                if not isinstance(item, dict):
+                    continue
+                mid, entry = _entry_from_v1_model(item)
+                models[mid] = entry
+    elif detected.get("mode") == "three_slot":
+        for role, probe in (detected.get("slots") or {}).items():
+            if not isinstance(probe, dict) or not probe.get("reachable"):
+                continue
+            host = str(probe.get("host") or "host.docker.internal")
+            port = int(probe.get("port") or 8080)
+            payload = _http_get_json(f"http://{host}:{port}/v1/models")
+            if not isinstance(payload, dict):
+                continue
+            for item in payload.get("data", []) or []:
+                if not isinstance(item, dict):
+                    continue
+                mid, entry = _entry_from_v1_model(item, role_hint=role)
+                models[mid] = entry
+
+    _debug_log(
+        "FIX",
+        "fleet_models.py:_list_models_from_http_fleet",
+        "router http fallback",
+        {"mode": detected.get("mode"), "model_count": len(models)},
+    )
+    return {"models": models, "mode": detected.get("mode", "idle")}
+
+
 def list_models() -> dict:
-    """Return all models known to the fleet (from host manifest)."""
-    return _helper_request("GET", "/models/list")
+    """Return all models known to the fleet (host manifest, with HTTP fallback)."""
+    result = _helper_request("GET", "/models/list")
+    models = result.get("models") if isinstance(result, dict) else None
+    has_models = bool(models) if isinstance(models, dict) else bool(models)
+
+    if result.get("ok") and has_models and not result.get("_router_unreachable"):
+        return result
+
+    if not result.get("_router_unreachable") and result.get("ok"):
+        # Helper reachable but manifest empty — still return as-is.
+        return result
+
+    fallback = _list_models_from_http_fleet()
+    fb_models = fallback.get("models") or {}
+    if fb_models:
+        return {
+            "ok": True,
+            "models": fb_models,
+            "models_dir": result.get("models_dir", ""),
+            "source": "router_http",
+            "host_helper_unreachable": True,
+            "message": (
+                "Host helper unreachable — showing models from live router /v1/models. "
+                "Start lmm_host_helper.py on the host for install/assign controls."
+            ),
+        }
+
+    if result.get("_router_unreachable"):
+        result.setdefault(
+            "message",
+            "Host helper unreachable and no live llama.cpp fleet answered over HTTP.",
+        )
+    return result
 
 
 def install_model(repo_id: str, filename: str, role: Optional[str] = None) -> dict:

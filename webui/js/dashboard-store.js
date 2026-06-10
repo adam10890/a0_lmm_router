@@ -79,6 +79,23 @@ function _parseHfInstallInput(repoRaw, fileRaw) {
   return { repo, file };
 }
 
+// #region agent log
+function _dbgLog(hypothesisId, location, message, data) {
+  fetch('http://127.0.0.1:7387/ingest/8130e853-1571-480f-b217-fd5d23ca67ec', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'e401df' },
+    body: JSON.stringify({
+      sessionId: 'e401df',
+      hypothesisId,
+      location,
+      message,
+      data: data || {},
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+}
+// #endregion
+
 function createDashboardStore() {
   const POLL_INTERVAL_MS = 5000;
   // A0 dispatches all plugin APIs under /api/plugins/<plugin_name>/<handler>.
@@ -99,16 +116,19 @@ function createDashboardStore() {
     hostIgnite:   `${API_BASE}/lmm_host_ignite`,
     hardwareScan:     `${API_BASE}/lmm_hardware_recommend`,
     slotRecs:         `${API_BASE}/lmm_slot_recommendations`,
+    fitSummary:       `${API_BASE}/lmm_fit_summary`,
     routerModels:     `${API_BASE}/router_models`,
     setRouterDefault: `${API_BASE}/set_router_default`,
     routerAliases:    `${API_BASE}/router_aliases`,
     setRouterAliasModel: `${API_BASE}/set_router_alias_model`,
     fleetReconnect:   `${API_BASE}/fleet_reconnect`,
+    mcpControl:       `${API_BASE}/mcp_control`,
   };
 
   return {
     // ── state ──────────────────────────────────────────────────
     gpus: [],
+    gpuSource: '',
     cpu: { load_pct: 0, ram_total_mb: 0, ram_used_mb: 0, ram_free_mb: 0 },
     slots: [],
     recommendations: [],
@@ -138,6 +158,20 @@ function createDashboardStore() {
     igniteState: 'idle',      // idle | pending | ok | needs_host | error
     igniteMessage: '',
     igniteHostHint: '',
+
+    // MCP server (Streamable HTTP inside A0 container)
+    mcp: {
+      running: false,
+      enabled: true,
+      port: 8095,
+      endpoint: '',
+      a0_settings_url: '',
+      log_path: '/tmp/mcp_server.log',
+      loading: false,
+      actionPending: false,
+      message: '',
+      error: '',
+    },
 
     // HF install form state
     installForm: {
@@ -208,6 +242,7 @@ function createDashboardStore() {
     // ── lifecycle ──────────────────────────────────────────────
     init() {
       this.refresh();
+      this._fetchMcpStatus();
       this.pollTimer = setInterval(() => this.refresh(), POLL_INTERVAL_MS);
       // Cold-start race: A0 may load before router/host-helper are ready.
       setTimeout(() => this._startupFleetSync(), 2500);
@@ -239,19 +274,51 @@ function createDashboardStore() {
         this._fetchStatsSummary(),
         this._fetchInstalledModels(),
         this._fetchRoleBindings(),
+        this._fetchMcpStatus(),
+        this._fetchFitSummary(),
       ]);
       // Slot recommendations needs slots + installed models loaded.
       await this._fetchSlotRecommendations();
       this.loading = false;
+      // #region agent log
+      _dbgLog('H4-H5', 'dashboard-store.js:refresh', 'refresh complete', {
+        modelCount: Object.keys(this.installedModels || {}).length,
+        slotCount: (this.slots || []).length,
+        fleetMode: this.fleetMode?.mode,
+        hasInstalledDiag: !!this.installedDiag,
+        hostReachable: this.installedDiag?.host_reachable,
+        mcpRunning: this.mcp?.running,
+      });
+      // #endregion
     },
 
     async _fetchInstalledModels() {
       try {
         const d = await _a0ApiCall(ENDPOINTS.listModels, {});
+        // #region agent log
+        _dbgLog('H3-H4', 'dashboard-store.js:_fetchInstalledModels', 'listModels response', {
+          ok: d?.ok,
+          modelCount: d?.models ? Object.keys(d.models).length : 0,
+          modelsType: d?.models ? (Array.isArray(d.models) ? 'array' : typeof d.models) : 'missing',
+          message: d?.message || '',
+          error: d?.error || '',
+        });
+        // #endregion
         if (d.ok && d.models) {
           this.installedModels = d.models;
+          if (d.host_helper_unreachable) {
+            this.installedDiag = {
+              host_reachable: false,
+              source: d.source || 'router_http',
+              message: d.message || '',
+            };
+          }
         }
-      } catch (_) { /* silent */ }
+      } catch (e) {
+        // #region agent log
+        _dbgLog('H4', 'dashboard-store.js:_fetchInstalledModels', 'listModels exception', { error: String(e?.message || e) });
+        // #endregion
+      }
     },
 
     async _fetchStatsSummary() {
@@ -273,6 +340,7 @@ function createDashboardStore() {
         const d = await _a0ApiCall(ENDPOINTS.computeStats, {});
         if (d.ok) {
           this.gpus = d.gpus || [];
+          this.gpuSource = d.gpu_source || '';
           this.cpu = d.cpu || this.cpu;
           this.fleetMode = d.fleet_mode || this.fleetMode;
           // Merge fresh slot data into existing slots so UI-only
@@ -344,8 +412,38 @@ function createDashboardStore() {
 
         // Installed-models diagnostics (when count == 0)
         this.installedDiag = d.installed_diagnostics || null;
+        // #region agent log
+        _dbgLog('H2-H5', 'dashboard-store.js:_fetchSlotRecommendations', 'slot recs', {
+          installedCount: d.installed_count,
+          hostReachable: d.installed_diagnostics?.host_reachable,
+          diagMessage: d.installed_diagnostics?.message || '',
+          modelsDir: d.models_dir || '',
+        });
+        // #endregion
       } catch (e) {
         this.slotRecsError = 'Connection failed: ' + (e.message || e);
+      }
+    },
+
+    async _fetchFitSummary() {
+      try {
+        const d = await _a0ApiCall(ENDPOINTS.fitSummary, {});
+        if (!d.ok) {
+          this.fitSummaryError = d.error || 'Fit summary unavailable';
+          return;
+        }
+        this.fitSummaryError = '';
+        this.fitSummary = {
+          mode: d.mode || 'read_only',
+          hardware: d.hardware || {},
+          slots: d.slots || [],
+          risk_notes: d.risk_notes || [],
+          recommendations: d.recommendations || [],
+          warnings: d.warnings || [],
+          data_sources: d.data_sources || {},
+        };
+      } catch (e) {
+        this.fitSummaryError = 'Connection failed: ' + (e.message || e);
       }
     },
 
@@ -752,7 +850,70 @@ function createDashboardStore() {
 
     async refreshFleetAndBindings() {
       this.showToast('Refreshing fleet status…', 'info', 2000);
-      await Promise.all([this._fetchStats(), this._fetchRoleBindings()]);
+      await Promise.all([this._fetchStats(), this._fetchRoleBindings(), this._fetchMcpStatus()]);
+    },
+
+    async _fetchMcpStatus() {
+      this.mcp.loading = true;
+      try {
+        const d = await _a0ApiCall(ENDPOINTS.mcpControl, { action: 'status' });
+        if (d.ok) {
+          this.mcp.running = !!d.running;
+          this.mcp.enabled = d.enabled !== false;
+          this.mcp.port = d.port || 8095;
+          this.mcp.endpoint = d.endpoint || '';
+          this.mcp.a0_settings_url = d.a0_settings_url || '';
+          this.mcp.log_path = d.log_path || '/tmp/mcp_server.log';
+          this.mcp.error = '';
+        } else {
+          this.mcp.error = d.error || 'MCP status unavailable';
+        }
+      } catch (e) {
+        this.mcp.error = 'MCP status connection failed';
+      } finally {
+        this.mcp.loading = false;
+      }
+    },
+
+    async mcpAction(action) {
+      if (this.mcp.actionPending) return;
+      this.mcp.actionPending = true;
+      this.mcp.message = '';
+      const labels = { start: 'Starting MCP…', stop: 'Stopping MCP…', restart: 'Restarting MCP…' };
+      this.showToast(labels[action] || 'MCP…', 'info', 2500);
+      try {
+        const d = await _a0ApiCall(ENDPOINTS.mcpControl, { action });
+        if (d.ok) {
+          this.mcp.running = !!d.running;
+          this.mcp.message = d.message || '';
+          const toastType = d.running ? 'ok' : (action === 'stop' ? 'info' : 'warn');
+          this.showToast(
+            d.running ? `MCP running on :${d.port}` : (d.message || 'MCP stopped'),
+            toastType,
+            5000,
+          );
+        } else {
+          this.mcp.error = d.error || 'MCP action failed';
+          this.showToast(this.mcp.error, 'error', 6000);
+        }
+      } catch (e) {
+        this.mcp.error = String(e?.message || e);
+        this.showToast(this.mcp.error, 'error', 6000);
+      } finally {
+        this.mcp.actionPending = false;
+        await this._fetchMcpStatus();
+      }
+    },
+
+    mcpStatusLabel() {
+      if (this.mcp.loading) return 'checking…';
+      if (!this.mcp.enabled) return 'disabled in config';
+      return this.mcp.running ? `live :${this.mcp.port}` : 'stopped';
+    },
+
+    mcpStatusClass() {
+      if (!this.mcp.enabled) return 'mcp-chip--disabled';
+      return this.mcp.running ? 'mcp-chip--live' : 'mcp-chip--stopped';
     },
 
     // Stronger than refresh: probes the fleet over HTTP (no Docker socket
