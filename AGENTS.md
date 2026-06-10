@@ -25,6 +25,10 @@ plane.
 - `helpers/context_planner.py` owns max-feasible context planning. Role context
   values are minimums, not caps; generated Router Mode presets carry the
   planned hard context and compression uses the effective context ratio.
+- `helpers/agent_init_policy.py` owns the quiet/full agent-init activity
+  policy. Quiet is the default: agent init runs no plugin background work
+  (no MCP spawn, no BackendManager, no params warm); operate the fleet, MCP
+  server, and provider outside the agent process.
 - `helpers/tool_exposure.py` owns Local Fleet tool-prompt exposure policy.
   Keep the main Agent Zero profile lean and route heavy tool surfaces to
   specialist profiles instead of toggling plugins globally during live chats.

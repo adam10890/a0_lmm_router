@@ -30,6 +30,20 @@ class WarmModelParamsExtension(Extension):
             return
 
         try:
+            from usr.plugins.a0_lmm_router.helpers import agent_init_policy
+
+            try:
+                from helpers import plugins
+
+                config = plugins.get_plugin_config("a0_lmm_router", agent=self.agent)
+                if not isinstance(config, dict):
+                    config = {}
+            except Exception:
+                config = {}
+            if not agent_init_policy.allow_params_warm(config):
+                log.debug("agent_init quiet mode: skipping model params warm.")
+                return
+
             plugin_conf = files.get_abs_path(
                 "usr/plugins/a0_lmm_router/conf/llama_cpp_servers.yaml"
             )

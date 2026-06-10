@@ -73,6 +73,17 @@ def _start_mcp_server(config_path: str) -> None:
     )
 
 
+def _plugin_config(agent) -> dict:
+    """Plugin config via Agent Zero's plugin system; {} when unavailable."""
+    try:
+        from helpers import plugins
+
+        config = plugins.get_plugin_config("a0_lmm_router", agent=agent)
+        return config if isinstance(config, dict) else {}
+    except Exception:
+        return {}
+
+
 class LlamaCppInitExtension(Extension):
     """Kick off llama.cpp fleet + MCP server the first time an agent is created."""
 
@@ -83,6 +94,16 @@ class LlamaCppInitExtension(Extension):
         _IGNITED = True
 
         try:
+            from usr.plugins.a0_lmm_router.helpers import agent_init_policy
+
+            if not agent_init_policy.allow_mcp_autostart(_plugin_config(self.agent)):
+                log.info(
+                    "agent_init quiet mode: skipping MCP/fleet bootstrap "
+                    "(set agent_init.mode: full or %s=full to restore).",
+                    agent_init_policy.ENV_MODE,
+                )
+                return
+
             plugin_conf = files.get_abs_path(
                 "usr/plugins/a0_lmm_router/conf/llama_cpp_servers.yaml"
             )

@@ -16,6 +16,9 @@ compute monitoring.
 
 - Keep portable helper behavior independent from A0 WebUI assumptions.
 - Do not bypass safe config roots or expose all local models by default.
+- `agent_init_policy.py` owns the quiet/full agent-init activity policy
+  (default: quiet). It must stay pure — no Agent Zero imports, no I/O —
+  so extensions can delegate go/no-go decisions and tests stay hermetic.
 
 ## Work Guidance
 

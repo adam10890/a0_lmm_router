@@ -1,3 +1,12 @@
+# What the plugin may run inside the Agent Zero process at agent init.
+# quiet (default): no background work in the agent process — no MCP server
+#   spawn, no BackendManager construction, no model-params warm. Operate the
+#   fleet/MCP/provider outside the agent: host compose, launcher.py, or
+#   scripts/run_provider.*. Env override: A0_LMM_AGENT_INIT_MODE=quiet|full.
+# full: legacy behavior — agent init bootstraps the MCP server and manager.
+agent_init:
+  mode: quiet
+
 mcp:
   enabled: true
   host: 127.0.0.1

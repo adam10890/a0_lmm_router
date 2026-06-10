@@ -211,8 +211,29 @@ endpoints. Full runbook: `docs/STANDALONE_PROVIDER.md`.
 
 ### Extension Points
 
-- `extensions/python/agent_init/_10_init_servers.py` — Initializes LMM slots on agent start
-- `extensions/python/message_loop_start/_20_smart_router.py` — Intercepts user messages for routing
+- `extensions/python/agent_init/_10_init_servers.py` — Bootstraps MCP server + manager on agent start (**full mode only**, see Quiet Mode below)
+- `extensions/python/agent_init/_11_warm_model_params.py` — Warms the model-params cache (**full mode only**)
+- `extensions/python/message_loop_prompts_after/_20_router_context_guard.py` — Context budget guard per message loop
+- `extensions/python/chat_model_call_before/` + `util_model_call_before/` — Tool-call adapter + output budget per model call
+
+### Quiet Mode (v1.4, default)
+
+By default the plugin no longer runs background work inside the Agent Zero
+process. On agent init it does **not** spawn the MCP server subprocess, does
+**not** construct the BackendManager, and does **not** warm the model-params
+cache. Chat keeps working unchanged — Agent Zero talks straight to the
+llama.cpp Router Mode fleet over HTTP (the `lmm_router` provider).
+
+Operate the moving parts outside the agent process instead:
+
+- Fleet: host Docker compose (as today) or `python launcher.py start`
+- MCP server: `python launcher.py mcp` or the standalone provider
+- Provider/Fleet Manager: `scripts/run_provider.ps1` / `.sh`
+
+To restore the legacy bootstrap behavior, set `agent_init.mode: full` in the
+plugin config or `A0_LMM_AGENT_INIT_MODE=full` in the environment. Policy
+lives in `helpers/agent_init_policy.py`. The dead `_20_smart_router` no-op
+hook was removed in v1.4.
 
 ---
 

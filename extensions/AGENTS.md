@@ -14,6 +14,11 @@ tool/MCP prompt exposure filtering.
 
 - Hooks must fail safely and preserve non-local/cloud model behavior unless the
   config explicitly targets local fleet models.
+- `agent_init` hooks must consult `helpers/agent_init_policy.py` before doing
+  any background work (MCP spawn, BackendManager construction, params warm).
+  Quiet mode is the default: the agent process runs no plugin background work;
+  the fleet/MCP/provider are operated outside it. Do not add new agent-init
+  side effects without a policy gate.
 
 ## Work Guidance
 
