@@ -105,7 +105,7 @@ This plugin replaces the deprecated `a0_lmm` and `a0_smart_router` plugins with 
 
 The plugin includes a **Model Context Protocol (MCP) server** that exposes router capabilities to any MCP-aware client (Agent Zero, Claude Desktop, Cursor, mcp-inspector, etc.). Runs as Streamable HTTP on port 8095, spec version `2025-06-18`.
 
-**Tools exposed:** `chat_completion`, `utility_completion`, `route_completion`, `get_embeddings`, `fleet_status`, `start_fleet`, `start_slot`, `stop_slot`, `list_slots`.
+**Tools exposed:** `chat_completion`, `utility_completion`, `route_completion`, `get_embeddings`, `fleet_status`, `start_fleet`, `start_slot`, `stop_slot`, `compute_budget`, `route_task`, `list_slots`.
 
 **Resources exposed:** `models://fleet/status`, `models://{slot_id}/info`, `models://hardware/profile`, `models://slots/list`.
 
@@ -124,7 +124,7 @@ The plugin includes a **Model Context Protocol (MCP) server** that exposes route
    }
    ```
    > ⚠️ The key is **`type`**, not `transport`. A0 silently ignores `transport`, falls back to default SSE, and you'll see `400 Bad Request` on `GET /mcp`.
-3. Click **Apply now**. The server appears in the status list with 9 tools.
+3. Click **Apply now**. The server appears in the status list with 11 tools.
 
 #### Smoke test from inside the container
 ```cmd
@@ -146,6 +146,118 @@ asyncio.run(main())
 - Live log: `docker exec agent-zero-2 cat /tmp/mcp_server.log`
 - Restart: `docker exec agent-zero-2 pkill -f "launcher.py mcp"` then re-run the launcher command
 - `stop_agent_zero.bat` shuts down the MCP server before stopping the container
+
+---
+
+## Compute Providers (Token Economy)
+
+One place that counts, budgets, and routes across every compute source: the
+local llama.cpp fleet, subscription providers (**Codex** via the `codex` CLI,
+**Ollama Cloud**), and any custom OpenAI-compatible provider you add.
+
+Key principle: Codex and Ollama Cloud expose no "remaining quota" API, so
+limits are **declared** in `conf/provider_limits.yaml` and usage is
+**counted locally** by an append-only ledger. Budget = declared limit −
+locally counted usage in a rolling window.
+
+### Provider registry (`conf/provider_limits.yaml`)
+
+```yaml
+providers:
+  codex:
+    name: "ChatGPT subscription (codex CLI)"
+    kind: subscription
+    invoke: codex_cli          # not reachable via litellm/HTTP
+    default_model: "gpt-5-codex"
+    priority: 1                 # 1 = strongest / first pick
+    limits:
+      - { window: "5h", max_tokens: 300000 }
+      - { window: "7d", max_tokens: 3000000 }
+
+  ollama_cloud:
+    name: "Ollama Cloud"
+    kind: subscription
+    invoke: openai_compatible
+    base_url: "https://ollama.com/v1"
+    api_key_env: "OLLAMA_API_KEY"    # env var name only, never the key itself
+    priority: 2
+    limits:
+      - { window: "1h", max_requests: 200 }
+      - { window: "1d", max_tokens: 2000000 }
+```
+
+- Window spec: `"<n>h"` or `"<n>d"`, rolling from *now* (epoch-based, not
+  calendar buckets) — capped at 35 days to match the usage ledger's retention.
+- `local` is a reserved provider id and never carries token limits; its
+  "budget" is the live VRAM/RAM/slot snapshot instead.
+- `conf/model_providers.yaml` is Agent Zero's own manifest, auto-merged
+  read-only at load time — the plugin **never** writes to it. Its local
+  llama.cpp entries fold into `local`; any other entries become
+  tracked-but-unlimited `external` providers unless already declared here.
+- Add/edit/remove providers from the dashboard form, or hand-edit the YAML —
+  both paths go through `helpers/budget_engine.save_provider` / `delete_provider`.
+
+### MCP tools
+
+| Tool | Purpose |
+|------|---------|
+| `compute_budget()` | Full state for every provider: local gross/net VRAM+RAM+slot health, subscription per-window used/limit/remaining/pct/burn-per-hour/exhausts-in-hours. |
+| `route_task(task, role, est_input_tokens, est_output_tokens, quality)` | Deterministic, **recommend-only** routing packet — the agent still executes the call itself. |
+
+`route_task`'s packet:
+
+| Field | Meaning |
+|---|---|
+| `provider_id` / `model` / `base_url` / `invoke` | Use exactly these for your own call (`invoke: codex_cli` → run through the codex CLI instead of an HTTP request). |
+| `expected_tokens` | Echo of your `est_input_tokens`/`est_output_tokens`. |
+| `budget_before` / `budget_after` | Tightest declared token window's state before/after this task's tokens land. |
+| `fallback` | Up to 3 ordered alternate providers to try if the call fails (or, when nothing has headroom, every candidate). |
+| `decision_reason` / `notes` | Why this provider was picked; `notes` carries a warning if the task pushes a window past 80%. |
+| `reservation_id` | In-memory, process-local hold on the tokens for 10 minutes so concurrent callers see pending demand before real usage lands in the ledger. |
+
+`quality` is `"best_available"` (highest-priority provider with headroom,
+default) or `"fast"`/`"cheap"` (prefers the free local fleet first).
+`provider_id: null` means everything is exhausted or cooling down.
+
+### Dashboard
+
+`dashboard.html` gained a **Compute Providers** section, polled alongside
+the rest of the dashboard:
+
+- Local card — gross/net VRAM, free RAM, per-slot health.
+- Subscription/external cards — one usage bar per declared window, burn
+  rate per hour, and a "~N h left" projection once burn rate is nonzero.
+  Bars are colored client-side per window (ok/warn/err at 60%/85%),
+  separate from the provider-level status badge (ok/warn/exhausted at 80%/100%).
+- Enable/disable and delete buttons per provider, plus an "+ Add provider"
+  form that posts straight to `api/lmm_providers.py`.
+
+### Accounting model
+
+- **Per-process ledgers** — `data/usage_a0.jsonl` (Agent Zero process) and
+  `data/usage_mcp.jsonl` (MCP server process), append-only, no cross-process
+  locking. Reads merge every `data/usage_*.jsonl`, cached by `(mtime, size)`,
+  dropping events older than 35 days.
+- **No double counting** — the `litellm.acompletion` patch in
+  `helpers/rate_limit_retry.py` records usage; `Model.unified_call` (which
+  calls into `acompletion`) is deliberately left uninstrumented so the same
+  call is never counted twice. The MCP-side `router_bridge.chat_complete`
+  records its own `"local"` usage from the llama.cpp response — a disjoint
+  path from litellm.
+- **Codex is CLI-only** — it's never reachable via litellm, so its usage is
+  never observed directly; only `route_task` reservations count toward its
+  budget. The dashboard and `compute_budget()` label Codex figures
+  **"estimated"** for this reason.
+- `data/route_decisions.jsonl` logs every `route_task` decision (task, role,
+  chosen provider, fallback) — the seed for a future LangSmith/Harbor
+  observability integration; nothing reads it back yet.
+
+### Agent usage
+
+Agents get how/when guidance from
+[`prompts/agent.system.tool.route_task.md`](./prompts/agent.system.tool.route_task.md):
+call `route_task` before any heavy or multi-step task, call `compute_budget`
+when planning parallel work, and never re-decide the model after routing.
 
 ---
 

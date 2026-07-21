@@ -19,6 +19,15 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+if __name__ != "__main__":
+    import pytest
+
+    # Manual integration script: functions are named test_* (for its own
+    # results summary) but take (host, port) args, so pytest collection
+    # fails with "fixture 'host' not found". Skip collection; run directly
+    # via `python tests/test_host_helper_models.py` instead.
+    pytest.skip("manual integration script, not a pytest suite", allow_module_level=True)
+
 
 def _read_token() -> str:
     temp = os.environ.get("TEMP", os.environ.get("TMP", tempfile.gettempdir()))

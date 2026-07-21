@@ -22,8 +22,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-# Make repo root importable so `usr.plugins...` resolves
-REPO_ROOT = Path(__file__).resolve().parents[4]
+# Make the plugin root importable: `usr.plugins...` in an Agent Zero tree,
+# or plain `helpers...` on a standalone checkout (see try/except below).
+REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -70,7 +71,10 @@ def _fresh_import_retry_module(monkeypatch):
     for key in list(sys.modules.keys()):
         if "rate_limit_retry" in key:
             del sys.modules[key]
-    from usr.plugins.a0_lmm_router.helpers import rate_limit_retry  # noqa: WPS433
+    try:
+        from usr.plugins.a0_lmm_router.helpers import rate_limit_retry  # noqa: WPS433
+    except ImportError:  # standalone checkout — plugin root is repo root
+        from helpers import rate_limit_retry  # noqa: WPS433
     return rate_limit_retry
 
 

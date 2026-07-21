@@ -1,0 +1,176 @@
+<!-- LMM Router — Pi harness console (local models + coding agent) -->
+<div x-data>
+  <template x-if="true">
+    <div x-data="createPiStore()" x-init="init()"
+         style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--color-bg,#1e1e2e);color:var(--color-fg,#cdd6f4);min-height:100%;">
+      <style>
+        .pi-root { --ok:#a6e3a1; --warn:#f9e2af; --err:#f38ba8; --info:#89b4fa; --accent:#cba6f7;
+                   --muted:#6c7086; --soft:#a6adc8; --surface:#181825; --surface2:#11111b; --border:#313244;
+                   max-width:1100px; margin:0 auto; padding:20px 16px 32px; }
+        .pi-root * { box-sizing:border-box; }
+        .pi-hdr { display:flex; align-items:center; gap:12px; margin-bottom:18px; padding-bottom:14px; border-bottom:1px solid var(--border); }
+        .pi-hdr h1 { font-size:1.2rem; font-weight:700; margin:0; }
+        .pi-sub { margin-left:auto; font-size:.75rem; color:var(--muted); }
+        .pi-section { background:var(--surface); border:1px solid var(--border); border-radius:10px; margin-bottom:14px; overflow:hidden; }
+        .pi-section-head { padding:10px 16px; background:var(--color-bg,#1e1e2e); border-bottom:1px solid var(--border);
+                           font-size:.8rem; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:var(--info); }
+        .pi-section-body { padding:14px 16px; }
+        .pi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; margin-bottom:10px; }
+        .pi-stat { background:var(--surface2); border:1px solid var(--border); border-radius:6px; padding:8px 10px; }
+        .pi-stat-l { font-size:.65rem; font-weight:700; text-transform:uppercase; color:var(--muted); }
+        .pi-stat-v { font-size:.85rem; font-weight:700; font-family:monospace; margin-top:4px; }
+        .pi-stat-v.ok { color:var(--ok); } .pi-stat-v.err { color:var(--err); } .pi-stat-v.warn { color:var(--warn); }
+        .pi-field { display:flex; flex-direction:column; gap:6px; margin-bottom:12px; }
+        .pi-field label { font-size:.72rem; font-weight:700; text-transform:uppercase; color:var(--muted); }
+        .pi-field input, .pi-field select, .pi-field textarea {
+          font:inherit; padding:8px 10px; border-radius:6px; background:var(--surface2); color:var(--color-fg,#cdd6f4); border:1px solid var(--border); }
+        .pi-field textarea { min-height:100px; font-family:monospace; resize:vertical; }
+        .btn { font:inherit; font-size:.78rem; font-weight:600; padding:7px 14px; border-radius:6px; border:1px solid transparent; cursor:pointer; }
+        .btn:disabled { opacity:.5; cursor:not-allowed; }
+        .btn-primary { background:#89b4fa20; color:var(--info); border-color:#89b4fa60; }
+        .btn-accent { background:#cba6f720; color:var(--accent); border-color:#cba6f760; }
+        .btn-ghost { background:transparent; color:var(--soft); border-color:var(--border); text-decoration:none; }
+        .pi-out { background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:12px; font-family:monospace;
+                  font-size:.82rem; white-space:pre-wrap; word-break:break-word; line-height:1.5; min-height:80px; }
+        .pi-err { background:#f38ba820; border:1px solid #f38ba860; color:var(--err); padding:10px; border-radius:6px; font-size:.82rem; }
+        .pi-model { display:flex; justify-content:space-between; padding:8px 10px; background:var(--surface2); border:1px solid var(--border);
+                    border-radius:6px; margin-bottom:6px; font-size:.8rem; }
+        .pi-dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:6px; }
+        .pi-dot.on { background:var(--ok); } .pi-dot.off { background:var(--err); }
+      </style>
+
+      <div class="pi-root">
+        <div class="pi-hdr">
+          <h1>π Pi Console</h1>
+          <a class="btn btn-ghost" href="/usr/plugins/a0_lmm_router/webui/dashboard.html">← Router</a>
+          <span class="pi-sub" x-text="status.backend ? 'via ' + status.backend : ''"></span>
+        </div>
+
+        <div class="pi-section">
+          <div class="pi-section-head">Harness</div>
+          <div class="pi-section-body">
+            <div class="pi-grid">
+              <div class="pi-stat">
+                <div class="pi-stat-l">pi CLI</div>
+                <div class="pi-stat-v" :class="status.pi_installed ? 'ok' : 'err'"
+                     x-text="status.pi_installed ? (status.pi_version || 'installed') : 'missing'"></div>
+              </div>
+              <div class="pi-stat">
+                <div class="pi-stat-l">Models</div>
+                <div class="pi-stat-v" x-text="(status.models || []).length"></div>
+              </div>
+            </div>
+            <template x-for="m in (status.models || [])" :key="m.full_id">
+              <div class="pi-model">
+                <span>
+                  <span class="pi-dot" :class="slotOk(m.full_id) ? 'on' : 'off'"></span>
+                  <b x-text="m.full_id"></b> — <span x-text="m.name"></span>
+                </span>
+                <span style="color:var(--muted);font-size:.72rem" x-text="m.base_url"></span>
+              </div>
+            </template>
+            <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+              <button class="btn btn-ghost" @click="refresh()" :disabled="loading">Refresh</button>
+              <button class="btn btn-accent" @click="install()" :disabled="installing"
+                      x-text="installing ? 'Installing…' : (status.pi_installed ? 'Redeploy config' : 'Install pi')"></button>
+            </div>
+            <template x-if="statusError"><div class="pi-err" style="margin-top:10px" x-text="statusError"></div></template>
+          </div>
+        </div>
+
+        <div class="pi-section">
+          <div class="pi-section-head">Task</div>
+          <div class="pi-section-body">
+            <div class="pi-field">
+              <label>Mode</label>
+              <select x-model="role">
+                <option value="coding">Coding → lmm-coding/utility (:8088)</option>
+                <option value="chat">Chat → lmm-router/chat (:8080)</option>
+              </select>
+            </div>
+            <div class="pi-field">
+              <label>Working directory</label>
+              <input x-model="cwd" placeholder="C:/path/to/project">
+            </div>
+            <div class="pi-field">
+              <label>Prompt</label>
+              <textarea x-model="prompt" placeholder="Describe the coding task for pi…"></textarea>
+            </div>
+            <label style="font-size:.78rem;color:var(--soft);display:flex;gap:6px;align-items:center;margin-bottom:12px">
+              <input type="checkbox" x-model="readOnly"> Read-only (no write/bash)
+            </label>
+            <button class="btn btn-primary" @click="run()" :disabled="running || !prompt.trim()"
+                    x-text="running ? 'Running pi…' : 'Run pi'"></button>
+          </div>
+        </div>
+
+        <template x-if="error"><div class="pi-section"><div class="pi-section-body"><div class="pi-err" x-text="error"></div></div></div></template>
+        <template x-if="result">
+          <div class="pi-section">
+            <div class="pi-section-head">Output</div>
+            <div class="pi-section-body">
+              <div class="pi-grid" style="margin-bottom:10px">
+                <div class="pi-stat"><div class="pi-stat-l">Status</div>
+                  <div class="pi-stat-v" :class="result.ok ? 'ok' : 'err'" x-text="result.ok ? 'OK' : 'FAILED'"></div></div>
+                <div class="pi-stat"><div class="pi-stat-l">Model</div>
+                  <div class="pi-stat-v" x-text="result.model || '—'"></div></div>
+              </div>
+              <div class="pi-out" x-text="result.output || result.stderr || '(empty)'"></div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </template>
+</div>
+
+<script>
+function createPiStore() {
+  const BASES = ['/api/plugins/a0_lmm_router', '/plugins/a0_lmm_router'];
+  async function api(name, body) {
+    let lastErr;
+    for (const base of BASES) {
+      try {
+        const r = await fetch(`${base}/${name}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}),
+        });
+        return await r.json();
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error('API unreachable');
+  }
+  return {
+    status: {}, statusError: '', loading: false, installing: false,
+    role: 'coding', cwd: '', prompt: '', readOnly: false,
+    running: false, result: null, error: '',
+    slotOk(id) { return !!(this.status.slots && this.status.slots[id] && this.status.slots[id].reachable); },
+    async init() { await this.refresh(); },
+    async refresh() {
+      this.loading = true; this.statusError = '';
+      try { this.status = await api('lmm_pi_status', {}); }
+      catch (e) { this.statusError = String(e.message || e); }
+      finally { this.loading = false; }
+    },
+    async install() {
+      this.installing = true; this.statusError = '';
+      try {
+        const action = this.status.pi_installed ? 'deploy' : 'install';
+        const d = await api('lmm_pi_install', { action });
+        if (!d.ok && d.error) this.statusError = d.error;
+        await this.refresh();
+      } catch (e) { this.statusError = String(e.message || e); }
+      finally { this.installing = false; }
+    },
+    async run() {
+      this.running = true; this.result = null; this.error = '';
+      try {
+        const body = { prompt: this.prompt, role: this.role, read_only: this.readOnly, timeout: 600 };
+        if (this.cwd.trim()) body.working_directory = this.cwd.trim();
+        this.result = await api('lmm_pi_coding', body);
+        if (!this.result.ok && this.result.error) this.error = this.result.error;
+      } catch (e) { this.error = String(e.message || e); }
+      finally { this.running = false; }
+    },
+  };
+}
+</script>

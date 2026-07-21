@@ -1,0 +1,48 @@
+# provider_limits.yaml — compute-provider subscription limits ("token economy").
+#
+# Owned and written by this plugin (api/lmm_providers.py + helpers/budget_engine.py).
+# conf/model_providers.yaml is auto-merged by A0 and is NEVER written back — local
+# llama.cpp entries from it fold into the `local` provider below at read time.
+#
+# Neither Codex nor Ollama Cloud exposes a "remaining quota" API, so limits here
+# are DECLARED (edit them to match your plan) and usage is counted locally by the
+# usage ledger. Budget = declared limit − locally counted usage per rolling window.
+#
+# Window spec: "<n>h" or "<n>d" (rolling, epoch-based — not calendar buckets).
+
+version: 1
+providers:
+  local:
+    name: "Local llama.cpp fleet"
+    kind: local            # capacity comes from the live compute snapshot; no token limits
+    priority: 3            # 1 = strongest / first pick for quality=best_available
+
+  codex:
+    name: "ChatGPT subscription (codex CLI)"
+    kind: subscription
+    invoke: codex_cli      # called via the codex CLI, not an HTTP base_url
+    default_model: "gpt-5-codex"
+    priority: 1
+    enabled: true
+    litellm_prefixes: []   # not reachable via litellm — counted via route_task reservations only
+    limits:
+      # Codex's real 5h window rolls from your first message; this is a now-5h
+      # approximation and the dashboard labels it "estimated". Edit to your plan.
+      - { window: "5h", max_tokens: 300000 }
+      - { window: "7d", max_tokens: 3000000 }
+
+  ollama_cloud:
+    name: "Ollama Cloud"
+    kind: subscription
+    invoke: openai_compatible
+    base_url: "https://ollama.com/v1"
+    api_key_env: "OLLAMA_API_KEY"   # env var name only — never the key itself
+    default_model: "qwen3-coder:480b"
+    priority: 2
+    enabled: true
+    litellm_prefixes: ["ollama_cloud/", "ollama/"]
+    base_url_match: "ollama.com"
+    limits:
+      - { window: "1h", max_requests: 200 }
+      - { window: "1d", max_tokens: 2000000 }
+      - { window: "7d", max_tokens: 10000000 }

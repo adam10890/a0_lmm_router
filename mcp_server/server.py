@@ -36,6 +36,7 @@ if str(_PLUGIN_DIR) not in sys.path:
 from mcp.server.fastmcp import FastMCP  # noqa: E402
 from mcp_server.tools import register_tools  # noqa: E402
 from mcp_server.resources import register_resources  # noqa: E402
+from helpers import usage_ledger  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -66,12 +67,20 @@ def _load_mcp_config() -> dict:
 def create_app(host: str = "0.0.0.0", port: int = 8095) -> FastMCP:
     # host/port are passed to FastMCP at construction time; mcp>=1.10 dropped
     # them from FastMCP.run() kwargs and reads them from settings instead.
+    # The MCP server is its own process — write usage to data/usage_mcp.jsonl
+    # so it never contends with the A0 process's usage_a0.jsonl.
+    usage_ledger.PROC_TAG = "mcp"
+
     mcp = FastMCP(
         "lmm-router",
         instructions=(
             "Local LLM router. Use chat_completion / utility_completion for inference, "
+            "pi_coding for autonomous code edits via the pi agent, "
             "get_embeddings for vectors, fleet_status to inspect slots, "
-            "and start_fleet / stop_slot to manage containers."
+            "and start_fleet / stop_slot to manage containers. "
+            "Before heavy or multi-step work call route_task to get a routing packet "
+            "(which provider/model to use given current budgets); call compute_budget "
+            "when planning parallel work."
         ),
         host=host,
         port=port,

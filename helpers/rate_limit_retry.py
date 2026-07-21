@@ -146,6 +146,48 @@ def with_retry(
     return decorator
 
 
+def _record_litellm_usage(kwargs: dict, response: Any) -> None:
+    """Best-effort per-provider accounting for a completed litellm call.
+
+    Maps the call to a provider via api_base first, model prefix second
+    (budget_engine.match_provider); unmatched calls are not recorded.
+    """
+    usage = getattr(response, "usage", None)
+    if usage is None and isinstance(response, dict):
+        usage = response.get("usage")
+    if usage is None:
+        return
+
+    def _get(obj: Any, key: str) -> int:
+        val = getattr(obj, key, None)
+        if val is None and isinstance(obj, dict):
+            val = obj.get(key)
+        return int(val or 0)
+
+    tokens_in = _get(usage, "prompt_tokens")
+    tokens_out = _get(usage, "completion_tokens")
+    if not tokens_in and not tokens_out:
+        return
+
+    try:
+        from . import budget_engine, usage_ledger
+    except ImportError:
+        from helpers import budget_engine, usage_ledger
+
+    provider_id = budget_engine.match_provider(
+        str(kwargs.get("model", "")), kwargs.get("api_base")
+    )
+    if not provider_id:
+        return
+    usage_ledger.record_usage(
+        provider_id,
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        model=str(kwargs.get("model", "")),
+        source="litellm",
+    )
+
+
 def patch_acompletion() -> bool:
     """
     Monkey-patch litellm.acompletion to add retry logic.
@@ -167,7 +209,12 @@ def patch_acompletion() -> bool:
         @functools.wraps(original)
         async def retrying_acompletion(*args: Any, **kwargs: Any) -> Any:
             retry_wrapper = with_retry()
-            return await retry_wrapper(original)(*args, **kwargs)
+            result = await retry_wrapper(original)(*args, **kwargs)
+            try:  # ponytail: best-effort accounting, never break the call path
+                _record_litellm_usage(kwargs, result)
+            except Exception:
+                pass
+            return result
 
         litellm.acompletion = retrying_acompletion
         logger.info("Patched litellm.acompletion with rate limit retry logic")
@@ -201,6 +248,9 @@ def patch_model_unified_call() -> bool:
         original = Model.unified_call
         Model._original_unified_call = original
 
+        # NOTE: no usage recording here — unified_call goes through
+        # litellm.acompletion (also patched); recording in both layers
+        # would double-count every agent call.
         @functools.wraps(original)
         async def retrying_unified_call(self: Any, *args: Any, **kwargs: Any) -> Any:
             retry_wrapper = with_retry()

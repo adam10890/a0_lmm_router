@@ -119,6 +119,16 @@ def load_model(slot: str, model_id: str, ctx_size: int | None = None) -> dict:
     return _helper_request("POST", "/models/load", body, timeout=180)
 
 
+def start_slot(slot: str) -> dict:
+    """Start a slot's container via docker compose."""
+    return _helper_request("POST", "/models/start", {"slot": slot}, timeout=60)
+
+
+def stop_slot(slot: str) -> dict:
+    """Stop a slot's container via docker compose."""
+    return _helper_request("POST", "/models/stop", {"slot": slot}, timeout=60)
+
+
 def fleet_status() -> dict:
     """Get fleet status including slots, health, and image version."""
     return _helper_request("GET", "/status")

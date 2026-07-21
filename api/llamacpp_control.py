@@ -26,7 +26,6 @@ class LlamacppControl(ApiHandler):
             from usr.plugins.a0_lmm_router.helpers.llama_cpp_manager import BackendManager
 
             conf_path = _resolve_conf_path()
-            BackendManager._instance = None  # noqa: SLF001
             manager = BackendManager.get_instance(conf_path)
 
             if operation == "start":

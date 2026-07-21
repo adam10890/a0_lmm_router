@@ -15,6 +15,8 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from mcp_server import router_bridge as bridge
+from helpers import budget_engine
+from helpers.pi_runner import CHAT_MODEL, DEFAULT_MODEL, run_pi_coding
 
 
 def register_tools(mcp: FastMCP) -> None:
@@ -130,6 +132,66 @@ def register_tools(mcp: FastMCP) -> None:
         return {"stopped": ok, "slot_id": slot_id}
 
     # ── Model discovery ────────────────────────────────────────────────────
+
+    @mcp.tool()
+    async def pi_coding(
+        prompt: str,
+        working_directory: str = "",
+        role: str = "coding",
+        read_only: bool = False,
+        timeout: int = 600,
+    ) -> dict:
+        """Run the pi coding agent against local llama.cpp slots.
+
+        Use role='coding' (default) for code edits via the utility slot (:8088).
+        Use role='chat' to run pi against the chat slot (:8080) instead.
+        Complements chat_completion for direct LLM calls without file tools.
+        """
+        model = CHAT_MODEL if role.strip().lower() == "chat" else DEFAULT_MODEL
+        return await run_pi_coding(
+            prompt,
+            working_directory=working_directory or None,
+            model=model,
+            timeout=timeout,
+            read_only=read_only,
+        )
+
+    # ── Token economy: budget + routing ────────────────────────────────────
+
+    @mcp.tool()
+    def compute_budget() -> dict:
+        """Full compute-budget state for every provider (local fleet, Codex,
+        Ollama Cloud, custom).
+
+        Local shows gross/net VRAM+RAM and slot health; subscription providers
+        show per-rolling-window usage vs declared limits, burn rate, and
+        projected exhaustion. Call this when planning parallel or heavy work.
+        """
+        return budget_engine.compute_budget()
+
+    @mcp.tool()
+    def route_task(
+        task: str,
+        role: str = "chat",
+        est_input_tokens: int = 0,
+        est_output_tokens: int = 0,
+        quality: str = "best_available",
+    ) -> dict:
+        """Get a deterministic routing packet for a task — which provider/model
+        to use, given current budgets. Recommend-only: execute the call yourself
+        using the returned provider_id/model/base_url/invoke fields.
+
+        quality: "best_available" (strongest provider with headroom, default)
+                 | "fast" | "cheap" (prefer the free local fleet).
+        Estimating tokens improves the budget projection and reservation.
+        """
+        return budget_engine.route_task(
+            task=task,
+            role=role,
+            est_input_tokens=est_input_tokens,
+            est_output_tokens=est_output_tokens,
+            quality=quality,
+        )
 
     @mcp.tool()
     def list_slots() -> dict:

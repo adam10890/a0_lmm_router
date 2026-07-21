@@ -1,5 +1,9 @@
-from usr.plugins.a0_lmm_router.helpers.smart_router.workflow_registry import WorkflowRegistry, get_workflow_registry
-from usr.plugins.a0_lmm_router.helpers.smart_router.session_models import Session, MessageRole, WorkflowStepStatus, WorkflowStep
+try:
+    from usr.plugins.a0_lmm_router.helpers.smart_router.workflow_registry import WorkflowRegistry, get_workflow_registry
+    from usr.plugins.a0_lmm_router.helpers.smart_router.session_models import Session, MessageRole, WorkflowStepStatus, WorkflowStep
+except ImportError:  # standalone install — plugin root on sys.path instead of /a0
+    from helpers.smart_router.workflow_registry import WorkflowRegistry, get_workflow_registry
+    from helpers.smart_router.session_models import Session, MessageRole, WorkflowStepStatus, WorkflowStep
 
 __all__ = [
     "WorkflowRegistry", "get_workflow_registry",

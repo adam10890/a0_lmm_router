@@ -18,6 +18,7 @@ Endpoints (all POST except /health and /models/list):
     POST /models/delete            — delete a model file
     POST /models/verify            — verify model sha256
     POST /models/assign            — assign model to slot (rewrite env + restart container)
+    POST /pi/coding                — run pi coding agent against local llama.cpp slots
 
     GET  /tokens/hf                — check HF token status
     POST /tokens/hf                — set HF token
@@ -197,6 +198,18 @@ def _scan_models_dir(models_dir: str) -> dict:
     if not base.exists():
         return models
 
+    # Import benchmark fetcher
+    try:
+        import sys
+        plugin_dir = Path(__file__).parent.parent
+        if str(plugin_dir) not in sys.path:
+            sys.path.insert(0, str(plugin_dir))
+        from helpers.benchmark_fetcher import get_benchmark_data
+        benchmark_available = True
+    except Exception as e:
+        print(f"[WARNING] Benchmark fetcher not available: {e}")
+        benchmark_available = False
+
     for path in base.rglob("*.gguf"):
         rel = path.relative_to(base).as_posix()
         parts = rel.split("/")
@@ -218,6 +231,16 @@ def _scan_models_dir(models_dir: str) -> dict:
             except Exception as e:
                 print(f"[WARNING] Failed to read GGUF metadata for {path.name}: {e}")
 
+        # Fetch benchmark data if available
+        benchmark_data = {}
+        if benchmark_available:
+            try:
+                # Try to match model name to benchmark data
+                # Use filename as hint, also try repo_id if known
+                benchmark_data = get_benchmark_data(model_id)
+            except Exception as e:
+                print(f"[WARNING] Failed to fetch benchmark data for {model_id}: {e}")
+
         models[model_id] = {
             "file": path.name,
             "path": str(Path(rel).parent) if len(parts) > 1 else "",
@@ -229,6 +252,12 @@ def _scan_models_dir(models_dir: str) -> dict:
             "n_ctx_train": gguf_metadata.get("n_ctx_train"),
             "n_layer": gguf_metadata.get("n_layer"),
             "n_embd": gguf_metadata.get("n_embd"),
+            # Benchmark data
+            "benchmark_score": benchmark_data.get("score", 0),
+            "benchmark_sources": benchmark_data.get("sources", []),
+            "benchmark_date": benchmark_data.get("date", ""),
+            "benchmark_confidence": benchmark_data.get("confidence", "unknown"),
+            "task_profiles": benchmark_data.get("task_profiles", []),
         }
     return models
 
@@ -464,7 +493,31 @@ def _get_models_dir_from_env(env_path: Path) -> str:
         for line in env_path.read_text(encoding="utf-8").splitlines():
             if line.startswith("LLAMA_MODELS_DIR="):
                 return line.split("=", 1)[1].strip()
-    # Fallback: derive from common patterns
+    # Fallback: check env var
+    fallback = os.environ.get("LLAMA_MODELS_DIR", "")
+    if fallback:
+        return fallback
+    # Last resort: parse docker-compose.yml for default value
+    compose_path = env_path.with_suffix(".yml") if env_path.suffix == ".env" else env_path.parent / "docker-compose.lmm.yml"
+    if compose_path.exists():
+        try:
+            import yaml
+            with open(compose_path, "r", encoding="utf-8") as f:
+                compose_data = yaml.safe_load(f)
+                # Extract from volume mount in x-llama-base
+                llama_base = compose_data.get("x-llama-base", {})
+                volumes = llama_base.get("volumes", [])
+                for vol in volumes:
+                    if isinstance(vol, dict) and vol.get("target") == "/models":
+                        source = vol.get("source", "")
+                        # Parse ${VAR:-default} syntax
+                        if source.startswith("${") and ":-" in source:
+                            default = source.split(":-", 1)[1].rstrip("}")
+                            return default
+                        return source
+        except Exception:
+            pass
+    # Ultimate fallback: use the known default from docker-compose
     return "C:/Users/frant/A0-Data-Permanent/A0_v.adam/models"
 
 
@@ -858,6 +911,177 @@ def _run_bat(project_dir: str, bat_name: str, *args: str) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+def _get_pi_status() -> dict[str, Any]:
+    plugin_root = Path(__file__).resolve().parent.parent
+    if str(plugin_root) not in sys.path:
+        sys.path.insert(0, str(plugin_root))
+
+    try:
+        from helpers.pi_runner import (  # noqa: PLC0415
+            deploy_pi_config,
+            find_pi_binary,
+            get_pi_version,
+            load_router_pi_models,
+        )
+    except ImportError as exc:
+        return {"ok": False, "error": f"pi_runner import failed: {exc}"}
+
+    import asyncio
+    import aiohttp  # noqa: PLC0415
+
+    models = load_router_pi_models()
+    slots: dict[str, Any] = {}
+
+    async def _probe_all() -> None:
+        for entry in models:
+            base_url = str(entry.get("base_url", ""))
+            if not base_url:
+                continue
+            health_url = base_url.rstrip("/").removesuffix("/v1") + "/health"
+            try:
+                timeout = aiohttp.ClientTimeout(total=4)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.get(health_url) as resp:
+                        slots[entry["full_id"]] = {
+                            "reachable": resp.status == 200,
+                            "http_status": resp.status,
+                            "health_url": health_url,
+                        }
+            except Exception as exc:
+                slots[entry["full_id"]] = {
+                    "reachable": False,
+                    "http_status": None,
+                    "health_url": health_url,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+
+    try:
+        asyncio.run(_probe_all())
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(_probe_all())
+        finally:
+            loop.close()
+
+    pi_bin = find_pi_binary()
+    config_paths = deploy_pi_config()
+    return {
+        "ok": True,
+        "pi_installed": bool(pi_bin),
+        "pi_binary": pi_bin,
+        "pi_version": get_pi_version(),
+        "config_paths": config_paths,
+        "models": models,
+        "slots": slots,
+        "backend": "host_helper",
+    }
+
+
+def _install_pi() -> dict[str, Any]:
+    npm = shutil.which("npm")
+    if not npm:
+        return {"ok": False, "error": "npm not found on PATH"}
+
+    try:
+        result = subprocess.run(
+            [npm, "install", "-g", "--ignore-scripts", "@earendil-works/pi-coding-agent"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=300,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "npm install timed out after 300s"}
+
+    if result.returncode != 0:
+        return {
+            "ok": False,
+            "error": "npm install failed",
+            "stderr": (result.stderr or "")[:4000],
+            "stdout": (result.stdout or "")[:2000],
+        }
+
+    status = _get_pi_status()
+    status["install_stdout"] = (result.stdout or "")[:2000]
+    status["message"] = "pi installed"
+    return status
+
+
+def _run_pi_coding(body: dict[str, Any]) -> dict[str, Any]:
+    plugin_root = Path(__file__).resolve().parent.parent
+    if str(plugin_root) not in sys.path:
+        sys.path.insert(0, str(plugin_root))
+
+    try:
+        from helpers.pi_runner import (  # noqa: PLC0415
+            DEFAULT_MODEL,
+            _build_pi_command,
+            _normalize_working_directory,
+            deploy_pi_config,
+            find_pi_binary,
+        )
+    except ImportError as exc:
+        return {"ok": False, "error": f"pi_runner import failed: {exc}"}
+
+    prompt = str(body.get("prompt", "")).strip()
+    if not prompt:
+        return {"ok": False, "error": "prompt is required"}
+
+    model = str(body.get("model", DEFAULT_MODEL)).strip() or DEFAULT_MODEL
+    timeout = int(body.get("timeout", 600))
+    read_only = bool(body.get("read_only", False))
+    working_directory = str(body.get("working_directory", "")).strip() or None
+
+    try:
+        cwd = _normalize_working_directory(working_directory)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    if not find_pi_binary():
+        return {
+            "ok": False,
+            "error": (
+                "pi CLI not found on host PATH. Run scripts/install_pi.bat "
+                "or: npm install -g --ignore-scripts @earendil-works/pi-coding-agent"
+            ),
+        }
+
+    deploy_pi_config()
+    cmd = _build_pi_command(prompt, model, read_only=read_only)
+
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False,
+            "error": f"pi timed out after {timeout}s",
+            "model": model,
+            "working_directory": str(cwd),
+        }
+
+    return {
+        "ok": result.returncode == 0,
+        "model": model,
+        "working_directory": str(cwd),
+        "exit_code": result.returncode,
+        "output": (result.stdout or "").strip(),
+        "stderr": (result.stderr or "").strip(),
+        "backend": "host_helper",
+    }
+
+
 # ---------------------------------------------------------------------------
 # HTTP Handler
 # ---------------------------------------------------------------------------
@@ -949,6 +1173,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": True, "has_token": bool(token), "token_prefix": token[:4] + "..." if token else None})
             return
 
+        if parsed.path == "/pi/status":
+            self._send_json(200, _get_pi_status())
+            return
+
         self._send_json(404, {"ok": False, "error": f"unknown endpoint: {parsed.path}"})
 
     def do_POST(self) -> None:
@@ -1030,7 +1258,7 @@ class Handler(BaseHTTPRequestHandler):
 
             # Build model path: /models/{path}/{file}
             model_file = model.get("file", "")
-            model_path = model.get("path", "")
+            model_path = str(model.get("path", "")).replace("\\", "/")
             full_model_path = f"/models/{model_path}/{model_file}" if model_path else f"/models/{model_file}"
 
             # Calculate optimal context size if context calculator is available
@@ -1102,6 +1330,46 @@ class Handler(BaseHTTPRequestHandler):
                 response_data["context_calculation"] = ctx_calc_result
 
             self._send_json(200, response_data)
+
+        elif parsed.path == "/models/start":
+            slot = body.get("slot", "").strip()
+            if not slot:
+                self._send_json(400, {"ok": False, "error": "slot is required"})
+                return
+            service_map = {
+                "chat": "a0-llama-chat",
+                "utility": "a0-llama-utility",
+                "embedding": "a0-llama-embed",
+                "embed": "a0-llama-embed",
+                "vision": "a0-llama-vision",
+                "reasoning": "a0-llama-reasoning",
+            }
+            service = service_map.get(slot.lower())
+            if not service:
+                self._send_json(400, {"ok": False, "error": f"unknown slot '{slot}'"})
+                return
+            result = _run_docker_compose(self.server.compose_path, "up", "-d", service)
+            self._send_json(200, {"ok": result.get("ok", False), "slot": slot, "service": service, "output": result.get("stdout", "")})
+
+        elif parsed.path == "/models/stop":
+            slot = body.get("slot", "").strip()
+            if not slot:
+                self._send_json(400, {"ok": False, "error": "slot is required"})
+                return
+            service_map = {
+                "chat": "a0-llama-chat",
+                "utility": "a0-llama-utility",
+                "embedding": "a0-llama-embed",
+                "embed": "a0-llama-embed",
+                "vision": "a0-llama-vision",
+                "reasoning": "a0-llama-reasoning",
+            }
+            service = service_map.get(slot.lower())
+            if not service:
+                self._send_json(400, {"ok": False, "error": f"unknown slot '{slot}'"})
+                return
+            result = _run_docker_compose(self.server.compose_path, "stop", service)
+            self._send_json(200, {"ok": result.get("ok", False), "slot": slot, "service": service, "output": result.get("stdout", "")})
 
         elif parsed.path == "/models/delete":
             model_id = body.get("model_id", "").strip()
@@ -1184,6 +1452,12 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json(400, {"ok": False, "error": "token is required in body"})
 
+        elif parsed.path == "/pi/coding":
+            self._send_json(200, _run_pi_coding(body))
+
+        elif parsed.path == "/pi/install":
+            self._send_json(200, _install_pi())
+
         else:
             self._send_json(404, {"ok": False, "error": f"unknown endpoint: {parsed.path}"})
 
@@ -1215,7 +1489,7 @@ def main() -> None:
     print(f"[READY] Compose file: {compose_path}")
     print(f"[READY] Project dir:  {args.project_dir}")
     print(f"[READY] Token file:   {_get_token_path()}")
-    print("[READY] Endpoints: /ignite /extinguish /status /run-bat /gpu-stats /hardware-scan /health")
+    print("[READY] Endpoints: /ignite /extinguish /status /run-bat /gpu-stats /hardware-scan /health /pi/status /pi/coding /pi/install")
     print("[READY] Model endpoints: /models/list /models/install /models/assign /models/delete /models/verify /models/jobs/{id}")
     print("[READY] Token endpoints: /tokens/hf")
 

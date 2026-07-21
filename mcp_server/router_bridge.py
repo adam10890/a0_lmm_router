@@ -16,6 +16,8 @@ from typing import Any
 
 import aiohttp
 
+from helpers import usage_ledger
+
 logger = logging.getLogger("lmm_router.mcp.bridge")
 
 # Allow running outside the /a0 container for testing.
@@ -84,6 +86,18 @@ async def chat_complete(
                     _get_manager().mark_slot_error(
                         _decision_slot_id(role), f"HTTP {resp.status}"
                     )
+                else:
+                    try:  # best-effort accounting — never break the call path
+                        u = (data or {}).get("usage") or {}
+                        usage_ledger.record_usage(
+                            "local",
+                            tokens_in=u.get("prompt_tokens", 0),
+                            tokens_out=u.get("completion_tokens", 0),
+                            model=f"{role}@{url}",
+                            source="mcp",
+                        )
+                    except Exception:
+                        pass
                 return data
     except aiohttp.ClientError as exc:
         _get_manager().mark_slot_error(_decision_slot_id(role), str(exc))
@@ -105,7 +119,19 @@ async def get_embeddings(texts: list[str]) -> dict[str, Any]:
                 headers={"Content-Type": "application/json"},
                 timeout=aiohttp.ClientTimeout(total=60),
             ) as resp:
-                return await resp.json()
+                data = await resp.json()
+                if resp.status == 200:
+                    try:  # best-effort accounting — never break the call path
+                        u = (data or {}).get("usage") or {}
+                        usage_ledger.record_usage(
+                            "local",
+                            tokens_in=u.get("prompt_tokens", 0),
+                            model=f"embedding@{url}",
+                            source="mcp",
+                        )
+                    except Exception:
+                        pass
+                return data
     except aiohttp.ClientError as exc:
         return {"error": str(exc)}
 

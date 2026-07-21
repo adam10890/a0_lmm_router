@@ -121,6 +121,10 @@ class SubprocessBackend(InferenceBackend):
         return status
 
     async def stop_slot(self, name: str) -> bool:
+        # Capture port before popping so WSL kill path still works
+        slot_status = self._slots.get(name)
+        wsl_port = slot_status.port if slot_status else None
+
         proc = self._processes.pop(name, None)
         self._slots.pop(name, None)
 
@@ -132,12 +136,8 @@ class SubprocessBackend(InferenceBackend):
         try:
             if use_wsl and sys.platform == "win32":
                 # Find and kill process by port in WSL
-                port = None
-                slot = self._slots.get(name)
-                if slot:
-                    port = slot.port
-                if port:
-                    kill_cmd = f"kill $(lsof -t -i:{port}) 2>/dev/null || true"
+                if wsl_port:
+                    kill_cmd = f"kill $(lsof -t -i:{wsl_port}) 2>/dev/null || true"
                     subprocess.run(["wsl", "bash", "-c", kill_cmd], timeout=10)
             elif proc.poll() is None:
                 if sys.platform == "win32":

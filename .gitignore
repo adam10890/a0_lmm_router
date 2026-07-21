@@ -14,6 +14,7 @@ _recovered/
 # Runtime config / state
 config.json
 execute_record.json
+data/
 
 # IDE
 .claude/

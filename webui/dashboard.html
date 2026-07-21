@@ -290,6 +290,11 @@
              title="Send a test prompt to any slot and inspect reasoning_content / timings">
             🧪 Model Test
           </a>
+          <a class="btn btn-accent" href="/usr/plugins/a0_lmm_router/webui/pi.html" target="_blank"
+             style="text-decoration:none;"
+             title="Pi coding harness over local llama.cpp slots">
+            π Pi
+          </a>
           <div class="lmm-ts" x-text="'Updated ' + timeAgo()"></div>
         </div>
 
@@ -498,7 +503,7 @@
                                 @change="s.selectedModelId = $event.target.value">
                           <option value="">-- Select model --</option>
                           <template x-for="opt in getSlotModelOptions(s.role)" :key="opt.id">
-                            <option :value="opt.id" x-text="opt.label" :selected="opt.id === getSlotCurrentModelId(s)"></option>
+                            <option :value="opt.id" x-text="opt.label"></option>
                           </template>
                         </select>
                         <input type="number" class="slot-ctx-input"
@@ -507,7 +512,7 @@
                                min="2048" step="2048"
                                title="Context window override (leave empty for auto-calculation)"/>
                         <button class="btn btn-primary slot-assign-btn"
-                                @click="const mid = s.selectedModelId || getSlotCurrentModelId(s); if (mid) assignModelToSlot(s.id, mid)"
+                                @click="const mid = s.selectedModelId || getSlotCurrentModelId(s); if (mid) assignModelToSlot(s.role, mid)"
                                 :disabled="!s.selectedModelId || s.selectedModelId === getSlotCurrentModelId(s)"
                                 title="Load model into this slot with auto-calculated context">
                           ⚡ Load
@@ -525,19 +530,23 @@
                                 x-text="((s._ctxSlider || 8192) / 1024).toFixed(0) + 'K tokens'"></span>
                         </div>
                         <input type="range" class="ctx-slider"
-                               min="2048" :max="(installedModels[s.selectedModelId || getSlotCurrentModelId(s)]?.n_ctx_train || 131072)" step="2048"
-                               :value="s._ctxSlider || 8192"
+                               :min="getMinContextForRole(s.role)" :max="(installedModels[s.selectedModelId || getSlotCurrentModelId(s)]?.n_ctx_train || 131072)" step="2048"
+                               :value="s._ctxSlider || getMinContextForRole(s.role)"
                                @input="s._ctxSlider = parseInt($event.target.value)"
-                               :style="'--slider-color:' + ctxVramColor(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || 8192)"/>
+                               :style="'--slider-color:' + ctxVramColor(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || getMinContextForRole(s.role))"/>
                         <div class="ctx-slider-footer">
-                          <span class="ctx-slider-min">2K</span>
+                          <span class="ctx-slider-min" x-text="(getMinContextForRole(s.role) / 1024).toFixed(0) + 'K'"></span>
                           <span class="ctx-slider-est"
-                                :style="'color:' + ctxVramColor(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || 8192)"
-                                x-text="'KV cache: ~' + estimateKVCacheGB(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || 8192).toFixed(1) + ' GB'"></span>
+                                :style="'color:' + ctxVramColor(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || getMinContextForRole(s.role))"
+                                x-text="'KV cache: ~' + estimateKVCacheGB(s.selectedModelId || getSlotCurrentModelId(s), s._ctxSlider || getMinContextForRole(s.role)).toFixed(1) + ' GB'"></span>
                           <span class="ctx-slider-max" x-text="((installedModels[s.selectedModelId || getSlotCurrentModelId(s)]?.n_ctx_train || 131072) / 1024).toFixed(0) + 'K'"></span>
                         </div>
                       </div>
                     </template>
+
+                    <!-- Slot error message -->
+                    <div class="lmm-msg err" style="margin-top:4px; font-size:.68rem"
+                         x-show="slotErrors[s.id]" x-text="slotErrors[s.id]"></div>
 
                     <!-- Swap in progress indicator -->
                     <div class="slot-swap-spinner" x-show="swapInProgress[s.id]">
@@ -579,7 +588,7 @@
                         <div class="ssr-actions">
                           <template x-if="sug.source === 'installed'">
                             <button class="btn btn-confirm slot-assign-btn"
-                                    @click="assignModelToSlot(s.id, sug.model_id)"
+                                    @click="assignModelToSlot(s.role, sug.model_id)"
                                     :disabled="swapInProgress[s.id]"
                                     x-text="'Assign ' + sug.model_id">
                             </button>
@@ -870,6 +879,124 @@
                 <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>23:00</span>
               </div>
             </div>
+          </div>
+        </div>
+
+        <!-- ─── Compute Providers (token economy) ────────────── -->
+        <div class="section">
+          <div class="section-head">
+            <div class="section-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v12"/><path d="M15.5 9.5c0-1.4-1.6-2.5-3.5-2.5s-3.5 1.1-3.5 2.5S10.1 12 12 12s3.5 1.1 3.5 2.5S13.9 17 12 17s-3.5-1.1-3.5-2.5"/></svg>
+              Compute Providers
+            </div>
+            <div class="section-meta" x-text="providers.length + ' providers · subscription usage counted locally (estimated)'"></div>
+          </div>
+          <div class="section-body">
+            <template x-if="providersError">
+              <div class="lmm-msg err" x-text="providersError"></div>
+            </template>
+
+            <div class="compute-grid">
+              <template x-for="p in providers" :key="p.id">
+                <div class="compute-card">
+                  <div class="compute-card-hdr">
+                    <span class="compute-card-title" x-text="p.name || p.id"></span>
+                    <span class="compute-badge" :class="providerBadgeClass(p)"
+                          x-text="p.status + (p.enabled === false ? ' · off' : '')"></span>
+                  </div>
+
+                  <!-- Local fleet: gross/net capacity -->
+                  <template x-if="p.kind === 'local'">
+                    <div>
+                      <div class="stat-row">
+                        <span class="stat-key">VRAM (gross)</span>
+                        <span class="stat-val" x-text="fmtMB((p.capacity || {}).gross_vram_mb || 0)"></span>
+                      </div>
+                      <div class="stat-row">
+                        <span class="stat-key">VRAM free (net)</span>
+                        <span class="stat-val" x-text="fmtMB((p.capacity || {}).free_vram_mb || 0)"></span>
+                      </div>
+                      <div class="stat-row">
+                        <span class="stat-key">RAM free</span>
+                        <span class="stat-val" x-text="fmtMB((p.capacity || {}).ram_free_mb || 0)"></span>
+                      </div>
+                      <template x-for="s in ((p.capacity || {}).slots || [])" :key="s.id">
+                        <div class="stat-row" style="font-size:.7rem">
+                          <span class="stat-key" x-text="s.role + (s.model_id ? ' · ' + s.model_id : '')"></span>
+                          <span class="stat-val" x-text="s.healthy ? 'healthy' : s.running ? 'starting' : 'stopped'"></span>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+
+                  <!-- Subscription / external: per-window budget bars -->
+                  <template x-if="p.kind !== 'local'">
+                    <div>
+                      <div class="stat-row" style="font-size:.7rem">
+                        <span class="stat-key" x-text="p.invoke + (p.default_model ? ' · ' + p.default_model : '')"></span>
+                        <span class="stat-val">
+                          <button class="btn btn-ghost" style="padding:0 6px"
+                                  @click="toggleProvider(p.id, p.enabled === false)"
+                                  x-text="p.enabled === false ? 'enable' : 'disable'"></button>
+                          <button class="btn btn-ghost" style="padding:0 6px" title="Remove provider"
+                                  @click="deleteProvider(p.id)">✕</button>
+                        </span>
+                      </div>
+                      <template x-if="!(p.windows || []).length">
+                        <div style="font-size:.72rem;color:var(--muted)">No limits declared — usage tracked only</div>
+                      </template>
+                      <template x-for="w in (p.windows || [])" :key="w.window">
+                        <div style="margin-top:6px">
+                          <div class="stat-row">
+                            <span class="stat-key" x-text="w.window + ' window'"></span>
+                            <span class="stat-val"
+                                  x-text="w.max_tokens ? (fmtTok(w.used_tokens) + ' / ' + fmtTok(w.max_tokens))
+                                                       : (w.used_requests + ' / ' + w.max_requests + ' req')"></span>
+                          </div>
+                          <div class="bar-wrap">
+                            <div class="bar-fill" :class="windowBarClass(w)"
+                                 :style="'width:' + Math.min(w.pct, 100) + '%'"></div>
+                            <span class="bar-label" x-text="w.pct + '%'"></span>
+                          </div>
+                          <div style="font-size:.66rem;color:var(--muted)" x-show="exhaustLabel(w)">
+                            <span x-text="'burn ' + fmtTok(w.burn_per_hour) + '/h · ' + exhaustLabel(w)"></span>
+                          </div>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+
+            <!-- Add provider -->
+            <details style="margin-top:12px">
+              <summary style="cursor:pointer;font-size:.75rem;color:var(--muted)">+ Add provider</summary>
+              <div class="install-form" style="margin-top:8px">
+                <input type="text" class="install-input" x-model="providerForm.id" placeholder="id (e.g. openrouter)" style="width:140px">
+                <input type="text" class="install-input" x-model="providerForm.name" placeholder="Display name" style="flex:1;min-width:160px">
+                <input type="text" class="install-input" x-model="providerForm.base_url" placeholder="Base URL (https://…/v1)" style="flex:1;min-width:200px">
+                <input type="text" class="install-input" x-model="providerForm.api_key_env" placeholder="API key env var" style="width:150px">
+                <input type="text" class="install-input" x-model="providerForm.default_model" placeholder="Default model" style="width:170px">
+                <input type="number" class="install-input" x-model="providerForm.priority" placeholder="Priority" title="1 = strongest" style="width:80px">
+              </div>
+              <template x-for="(w, i) in providerForm.windows" :key="i">
+                <div class="install-form" style="margin-top:6px">
+                  <input type="text" class="install-input" x-model="w.window" placeholder="Window (5h / 1d / 7d)" style="width:140px">
+                  <input type="number" class="install-input" x-model="w.max_tokens" placeholder="Max tokens" style="width:140px">
+                  <input type="number" class="install-input" x-model="w.max_requests" placeholder="Max requests" style="width:140px">
+                  <button class="btn btn-ghost" @click="removeProviderWindow(i)" x-show="providerForm.windows.length > 1">✕</button>
+                </div>
+              </template>
+              <div class="btn-row" style="margin-top:8px">
+                <button class="btn btn-ghost" @click="addProviderWindow()">+ window</button>
+                <button class="btn btn-accent" @click="saveProvider()"
+                        :disabled="!providerForm.id || providerForm.saving"
+                        x-text="providerForm.saving ? 'Saving…' : 'Save provider'"></button>
+              </div>
+              <div x-show="providerForm.error" class="lmm-msg err" style="margin-top:8px" x-text="providerForm.error"></div>
+              <div x-show="providerForm.success" class="lmm-msg ok" style="margin-top:8px" x-text="providerForm.success"></div>
+            </details>
           </div>
         </div>
 
